@@ -5,7 +5,7 @@ import jax.numpy as jnp
 import jax
 import optax
 import haiku as hk
-from adaptive.Distributions import student_t, multivariate_normal, Stochastic_Volatility, Bayesian_Logistic_Regression
+from Distributions import student_t, multivariate_normal, Stochastic_Volatility, Bayesian_Logistic_Regression
 
 class Basic_settings():
     def __init__(
@@ -43,6 +43,7 @@ class Basic_settings():
             NotImplementedError
             
         self.logtarget = jax.jit(self.target.logpdf)
+        # self.logtarget = self.target.logpdf
         self.logproposal = jax.jit(self.proposal.logpdf)
     
     # t_mean: mean value of target ; t_L: scale of target

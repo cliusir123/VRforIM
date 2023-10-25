@@ -2,7 +2,7 @@ import numpy.random as nr
 import numpy as np
 import scipy.stats as ss
 from typing import Tuple
-from Distributions import multivariate_normal, student_t
+from Distributions import multivariate_normal, student_t, lognormal, gamma
 import jax
 import jax.numpy as jnp
 
@@ -13,17 +13,20 @@ class IndMH():
         itrnum: int = 10000,                         #number of MH steps
         sample_num : int = 4096,                     #number of samples
         dim : int = 16,
-        value : int = 10
+        value : int = 10,
+        target : str = 'student_t',
+        proposal : str = 'student_t',
         ) -> None:
         self.dim = dim
-        self.target = multivariate_normal(self.dim, value)
-        self.proposal = multivariate_normal(self.dim, value)
+        self.target = eval(target)(self.dim, value)
+        self.proposal = eval(proposal)(self.dim, value)
         self.itrnum = itrnum
         self.sample_num = sample_num
         
-
-        self.logtarget = jax.jit(self.target.logpdf, device=jax.devices('cpu')[0])
-        self.logproposal = jax.jit(self.proposal.logpdf, device=jax.devices('cpu')[0])
+        self.logtarget = self.target.logpdf
+        self.logproposal = self.proposal.logpdf
+        # self.logtarget = jax.jit(self.target.logpdf, device=jax.devices('cpu')[0])
+        # self.logproposal = jax.jit(self.proposal.logpdf, device=jax.devices('cpu')[0])
 
     def set_distribution_parameters(self, *args) -> None:
         self.t_mean = args[0]

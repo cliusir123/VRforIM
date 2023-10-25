@@ -25,6 +25,8 @@ class Estimator():
             pCov = paras[1][-self.sample_size:]
             for i in range(self.sample_size):
                 self.paras.append((pMeans[i], pCov[i]))
+        elif len(paras) == 1:
+            self.paras = paras
         else:
             self.paras = paras[-self.sample_size:]
     
@@ -188,6 +190,18 @@ class Second_Est(Estimator):
             quad[i] = data[i][1][self.pos, self.pos] + data[i][0][self.pos] ** 2
         return quad
 
+class ex(Estimator):
+    def __init__(self, sample_size, batch_size) -> None:
+        super().__init__(sample_size, batch_size)
+    
+    def F(self, data):
+        return np.exp(-data[:])
+    
+    def F_approx(self, data):
+        return np.exp(-data[:])
+    
+    def analytics(self,data):
+        return (1/(-1+np.exp(1))+np.sqrt(np.exp(1)))**(1/(1-np.exp(1)))*np.exp(-1/(2*(1-np.exp(1))))
 
 
 
