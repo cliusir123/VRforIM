@@ -175,8 +175,12 @@ class GP_Regression(DisBase):
         elif dataset == 'boston':
             self.Xtrain = mat['X']
             self.Ytrain = mat['y']
-            self.Xtest = mat['X_star']
-            self.Ytest = mat['y_star']
+            self.Xtest = mat['Xstar']
+            self.Ytest = mat['ystar']
+        mean_inputs = np.mean(self.Xtrain, axis=0)
+        std_inputs = np.std(self.Xtrain, axis=0)
+        self.Xtrain = (self.Xtrain- mean_inputs[None, :]) / std_inputs[None, :]
+        self.Ytrain = self.Ytrain - np.mean(self.Ytrain)
         self.dim = 3
         self.n_data = self.Xtrain.shape[0]
 
@@ -184,6 +188,7 @@ class GP_Regression(DisBase):
         Xcov = jnp.expand_dims(self.Xtrain, axis=0).repeat(self.n_data, axis=0)
         Xcov2 = jnp.expand_dims(self.Xtrain, axis=0).repeat(self.n_data, axis=0).transpose(1,0,2)
         self.cov = jnp.exp( - jnp.sum((Xcov - Xcov2) ** 2 / jnp.exp(x[0]), axis = 2) / 2 ) * (jnp.exp(x[1]) ) + jnp.exp(x[2]) * jnp.diag(jnp.ones(self.n_data))
+        # self.cov = jnp.exp( - jnp.sum((Xcov - Xcov2) ** 2 / jnp.exp(x[:-2]), axis = 2) / 2 ) * (jnp.exp(x[-2]) ) + jnp.exp(x[-1]) * jnp.diag(jnp.ones(self.n_data)) #different lengthscale
         self.L = jnp.linalg.cholesky(self.cov)
         v = jax.lax.linalg.triangular_solve(self.L, self.Ytrain, left_side=True, lower=True)
         log_lik = - 0.5 * jnp.sum(v * v) - 0.5 * self.n_data * jnp.log(2 * jnp.pi) - jnp.sum(jnp.log(jnp.diag(self.L)))

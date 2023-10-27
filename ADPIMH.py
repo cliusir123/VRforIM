@@ -106,7 +106,7 @@ class Basic_settings():
 
     def optimization_init(self, not_fix_mean = False):
         if not_fix_mean:
-            self.optimizer_mean = optax.adam(self.learning_rate)
+            self.optimizer_mean = optax.adam(self.learning_rate * 10)
             self.opt_state_mean = self.optimizer_mean.init(self.p_mean)
         self.optimizer_L = optax.adam(self.learning_rate)
         self.opt_state_L = self.optimizer_L.init(self.adp_L)
@@ -153,6 +153,7 @@ class BAIM(Basic_settings):
         super().__init__(target_str, proposal_str, itrnum, dim, learning_rate, model, df, value)
         self.batch_size = batch_size
         self.n_batch = int(self.itrnum / self.batch_size)
+        self.learning_rate_init = learning_rate
 
 
     def adpIMH(self) -> Tuple[np.ndarray,...]:
@@ -196,6 +197,7 @@ class BAIM(Basic_settings):
                 self.grad_val = 0
                 self.grad_L = 0
                 self.cum_obj = 0
+                self.learning_rate = self.learning_rate_init / (1 + 0.02 * (i + 1) / self.batch_size)
             
         return t_sample, p_sample, acceptance_rate, (pmeans,pSigs), loss,  logtar, is_acc
 
@@ -248,6 +250,7 @@ class adp_only(Basic_settings):
         super().__init__(target_str, proposal_str, itrnum, dim, learning_rate, model, df)
         self.batch_size = batch_size
         self.n_batch = int(self.itrnum / self.batch_size)
+        self.learning_rate_init = learning_rate
 
     def adp(self, nfm):
         loss = np.zeros(self.n_batch)
@@ -268,6 +271,7 @@ class adp_only(Basic_settings):
                 self.grad_val = 0
                 self.grad_L = 0
                 self.cum_obj = 0
+                self.learning_rate = self.learning_rate_init / (1 + 0.02 * (i + 1) / self.batch_size)
         return loss
     
 
