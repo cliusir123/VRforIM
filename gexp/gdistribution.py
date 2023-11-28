@@ -23,15 +23,14 @@ class gprior():
         return np.array(samples)
 
     def logpdf(self, x, cov0):
-        n = 1000
+        n = 500
         loglik = 0
-        beta = x
         for i in range(n):
             w = nr.beta(1, 1)
             g = w / (1 - w)
             cov = cov0 * g
             # cov = cov0
-            loglik += jss.multivariate_normal.pdf(beta, jnp.zeros(self.dim), cov)
+            loglik += jss.multivariate_normal.pdf(x, jnp.zeros(self.dim), cov)
         return jnp.log(loglik / n)
 
 class mix_normal():
@@ -52,35 +51,39 @@ class mix_normal():
         return np.array(samples)
     
     def logpdf(self, x):
-        beta = x
         lik = 0
         for i in range(self.n_comps):
-            lik += jss.multivariate_normal.pdf(beta, np.zeros(self.dim), self.covs[i]) * self.weights[i]
+            lik += jss.multivariate_normal.pdf(x, np.zeros(self.dim), self.covs[i]) * self.weights[i]
         loglik = jnp.log(lik)
         return loglik
 
-    def em_algorithm(self, data, n_comps, cov0, max_itr = 100):
+    def em_algorithm(self, data, n_comps, cov0, max_itr = 1000):
         dim = self.dim
         n = data.shape[0]
         weights = np.ones(n_comps) / n_comps
-        gs = np.ones(n_comps)
-        covs = cov0 * gs
+        gs = nr.uniform(1,10,n_comps)
+        covs = np.array([cov0 * gs[i] for i in range(n_comps)])
+        quad = np.array([data[i].T @ np.linalg.inv(cov0) @ data[i] for i in range(n)])
         for itr in range(max_itr):
+            print(itr, weights, gs, weights.sum())
             # E-step
             loglik = np.zeros((n, n_comps))
             for i in range(n_comps):
-                loglik[:, i] = jss.multivariate_normal.logpdf(data, np.zeros(dim), covs[i]) + np.log(weights[i])
+                for j in range(n):
+                    loglik[j, i] = jss.multivariate_normal.pdf(data[j], np.zeros(dim), covs[i])*weights[i]
+                    if loglik[j, i] < 1e-10:
+                        loglik[j, i] = 1e-10
             # loglik_max = np.max(loglik, axis = 1)
             # loglik = loglik - loglik_max[:, np.newaxis]
             # loglik = loglik + loglik_max[:, np.newaxis]
-            loglik = np.exp(loglik)
-            loglik = loglik / np.sum(loglik, axis = 1)[:, np.newaxis]
+            loglik = loglik / np.sum(loglik, axis = 1)[:, None]
             # M-step
             weights = np.sum(loglik, axis = 0) / n
             for i in range(n_comps):
                 for j in range(n):
-                    gs[i] += loglik[j, i] * data[j].T @ cov0 @ data[j]
-                gs[i] = covs[i] / (np.sum(loglik[:, i]) * self.dim)
+                    gs[i] += loglik[j, i] * quad[j]
+                gs[i] = gs[i] / (np.sum(loglik[:, i]) * self.dim)
+                covs[i] = cov0 * gs[i]
         self.n_comps = n_comps
         self.weights = weights
         self.covs = covs

@@ -79,7 +79,8 @@ class BF(Estimator):
         self.inputs = inputs
         self.outputs = outputs
         # self.analytics()
-        self.analy = 1*10**(-13)
+        self.analy = self.analytics()
+        print(self.analy)
     
     # def F(self, X):
     #     logits = self.inputs @ X.T
@@ -103,7 +104,7 @@ class BF(Estimator):
     def analytics(self):
         mc = mix_normal(self.inputs.shape[1])
         mc.set_parameters(len(self.coefs), self.coefs, self.covs)
-        data = mc.sampler(self.coefs, self.covs, 10000)
+        data = mc.sampler(20000)
         return np.mean(self.F(data))
         # def integrand(beta):
         #     beta0 = beta[0]
