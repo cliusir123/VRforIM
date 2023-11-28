@@ -135,11 +135,12 @@ class Bayesian_Logistic_Regression(DisBase):
         super().__init__(dim)
 
     def load_data(self, dataset):
-        file = "/content/" + dataset + ".mat"
+        file = "/home/ranbot/optionpricing/data/" + dataset + ".mat"
         mat = scipy.io.loadmat(file)
         data = mat['X']
         if (dataset == 'caravan' or dataset == 'pima' or dataset == 'ripley' or dataset == 'australian'):
             self.inputs = data[:, 0:-1]
+            print(self.inputs.shape)
             self.outputs = data[:, -1]
         elif dataset == 'german' or dataset == 'heart':
             inputs = data[:, 0:-1]
@@ -154,6 +155,7 @@ class Bayesian_Logistic_Regression(DisBase):
             self.outputs = outputs.astype(jnp.float64)
 
     def logpdf(self, x, *paras, prior_var = 1.0):
+        print(self.inputs.shape)
         logits = self.inputs @ x
         log_lik = distrax.Bernoulli(logits=logits).log_prob(self.outputs).sum()
         log_prior = -(0.5 * x.shape[0]) * jnp.log(2. * jnp.pi) - (0.5 / prior_var) * jnp.sum(x * x)
@@ -177,8 +179,13 @@ class GP_Regression(DisBase):
             self.Ytrain = mat['y']
             self.Xtest = mat['Xstar']
             self.Ytest = mat['ystar']
-        mean_inputs = np.mean(self.Xtrain, axis=0)
-        std_inputs = np.std(self.Xtrain, axis=0)
+        elif dataset == 'bodyfat':
+            self.Xtrain = mat['Xtrain'].toarray()
+            self.Ytrain = mat['Ytrain']
+            self.Xtest = mat['Xtest'].toarray()
+            self.Ytest = mat['Ytest']
+        mean_inputs = np.mean(np.array(self.Xtrain), axis=0)
+        std_inputs = np.std(np.array(self.Xtrain), axis=0)
         self.Xtrain = (self.Xtrain- mean_inputs[None, :]) / std_inputs[None, :]
         self.Ytrain = self.Ytrain - np.mean(self.Ytrain)
         self.dim = 3

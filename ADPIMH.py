@@ -154,6 +154,7 @@ class BAIM(Basic_settings):
         self.batch_size = batch_size
         self.n_batch = int(self.itrnum / self.batch_size)
         self.learning_rate_init = learning_rate
+        self.learning_rate = learning_rate
 
 
     def adpIMH(self) -> Tuple[np.ndarray,...]:
@@ -166,7 +167,7 @@ class BAIM(Basic_settings):
         logtar = np.zeros(self.itrnum)
         loss = np.zeros(self.n_batch)
         pmeans = np.zeros((self.itrnum, self.dim))
-        pSigs = np.zeros((self.itrnum, self.dim, self.dim))
+        pSigs = np.zeros((self.itrnum, self.dim))
 
         self.init_state()
         self.optimization_init(True)
@@ -188,7 +189,7 @@ class BAIM(Basic_settings):
             is_acc[i] = is_a
             logtar[i] = self.log_t     
             pmeans[i] = jnp.reshape(self.p_mean, (self.dim,))
-            pSigs[i] = self.p_L @ self.p_L.T
+            pSigs[i] = jnp.diag(self.p_L @ self.p_L.T)
 
             if (i + 1) % self.batch_size == 0:
                 self.optimization_update(True)
@@ -197,8 +198,8 @@ class BAIM(Basic_settings):
                 self.grad_val = 0
                 self.grad_L = 0
                 self.cum_obj = 0
-                self.learning_rate = self.learning_rate_init / (1 + 0.02 * (i + 1) / self.batch_size)
-            
+                # self.learning_rate = self.learning_rate_init / (1 + 0.02 * (i + 1) / self.batch_size)
+        print(pSigs.shape)
         return t_sample, p_sample, acceptance_rate, (pmeans,pSigs), loss,  logtar, is_acc
 
 class IndMH(Basic_settings):
@@ -251,6 +252,7 @@ class adp_only(Basic_settings):
         self.batch_size = batch_size
         self.n_batch = int(self.itrnum / self.batch_size)
         self.learning_rate_init = learning_rate
+        self.learning_rate = learning_rate
 
     def adp(self, nfm):
         loss = np.zeros(self.n_batch)

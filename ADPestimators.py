@@ -20,11 +20,9 @@ class Estimator():
         self.Y = Y[-self.sample_size:]
         self.Acpt = Acpt[-self.sample_size:]
         if type(paras) == tuple:
-            self.paras = []
             pMeans = paras[0][-self.sample_size:]
             pCov = paras[1][-self.sample_size:]
-            for i in range(self.sample_size):
-                self.paras.append((pMeans[i], pCov[i]))
+            self.paras=[pMeans, pCov]
         elif len(paras) == 1:
             self.paras = paras
         else:
@@ -78,8 +76,7 @@ class Estimator():
         coef = numerator / denominator
 
         IMH_estimator = Main + coef * (Poisson_cv - coef_2 * Static_cv)
-        return IMH_estimator.mean(), IMH_estimator.var(), coef, coef_2
-
+        return IMH_estimator.mean(), IMH_estimator.var()
 
     def IM(self):
         Main = self.F(self.X)
@@ -108,7 +105,7 @@ class Estimator():
             end = (i + 1) * self.batch_size
             Main = self.F(self.X[start : end])
             Poisson_cv = self.Acpt[start : end] * (self.F(self.Y[start : end]) - self.F(self.X[start : end]))
-            Static_cv = self.F_approx(self.Y[start : end]) - self.analytics(self.paras[start : end])
+            Static_cv = self.F_approx(self.Y[start : end]) - self.analytics(self.paras[0][start : end], self.paras[1][start : end])
             coef_2 = np.sum((Static_cv - np.mean(Static_cv))*(Poisson_cv - np.mean(Poisson_cv)))/np.sum((Static_cv - np.mean(Static_cv))**2)
             # coef_2 = np.cov(Poisson_cv, Static_cv)[0,1] / np.var(Static_cv)
             PG_estimator = Main + Poisson_cv - coef_2 * Static_cv
@@ -133,6 +130,19 @@ class First_Est(Estimator):
     def analytics(self, data):
         return data[:, self.pos]
 
+class EXP_Est(Estimator):
+    def __init__(self, sample_size, batch_size, pos) -> None:
+        super().__init__(sample_size, batch_size)
+        self.pos = pos
+
+    def F(self, data):
+        return np.exp(data[:, self.pos])
+    
+    def F_approx(self, data):
+        return np.exp(data[:, self.pos])
+    
+    def analytics(self, data1,data2):
+        return np.exp(data1[:, self.pos] + data2[:, self.pos] / 2)
 
 class Simulation_Est(Estimator):
     def __init__(self, sample_size, batch_size) -> None:

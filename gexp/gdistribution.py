@@ -1,0 +1,87 @@
+import jax.numpy as jnp
+import jax
+import jax.scipy.stats as jss
+import numpy as np
+import numpy.random as nr
+
+class gprior():
+    def __init__(self,dim) -> None:
+        self.dim = dim
+    
+    def set_parameters(self, cov0):
+        self.cov0 = cov0
+    
+    def sampler(self, num):
+        samples = []
+        for i in range(num):
+            w = nr.beta(1, 1)
+            g = w / (1 - w)
+            cov = self.cov0 * g
+            # cov = cov0
+            beta = nr.multivariate_normal(np.zeros(self.dim), cov)
+            samples.append(beta)
+        return np.array(samples)
+
+    def logpdf(self, x, cov0):
+        n = 1000
+        loglik = 0
+        beta = x
+        for i in range(n):
+            w = nr.beta(1, 1)
+            g = w / (1 - w)
+            cov = cov0 * g
+            # cov = cov0
+            loglik += jss.multivariate_normal.pdf(beta, jnp.zeros(self.dim), cov)
+        return jnp.log(loglik / n)
+
+class mix_normal():
+    def __init__(self, dim) -> None:
+        self.dim = dim
+    
+    def set_parameters(self, n_comps, weights, covs):
+        self.n_comps = n_comps
+        self.weights = weights
+        self.covs = covs
+    
+    def sampler(self, num):
+        samples = []
+        for i in range(num):
+            z = nr.choice(np.arange(self.n_comps), p = self.weights)
+            beta = nr.multivariate_normal(np.zeros(self.dim), self.covs[z])
+            samples.append(beta)
+        return np.array(samples)
+    
+    def logpdf(self, x):
+        beta = x
+        lik = 0
+        for i in range(self.n_comps):
+            lik += jss.multivariate_normal.pdf(beta, np.zeros(self.dim), self.covs[i]) * self.weights[i]
+        loglik = jnp.log(lik)
+        return loglik
+
+    def em_algorithm(self, data, n_comps, cov0, max_itr = 100):
+        dim = self.dim
+        n = data.shape[0]
+        weights = np.ones(n_comps) / n_comps
+        gs = np.ones(n_comps)
+        covs = cov0 * gs
+        for itr in range(max_itr):
+            # E-step
+            loglik = np.zeros((n, n_comps))
+            for i in range(n_comps):
+                loglik[:, i] = jss.multivariate_normal.logpdf(data, np.zeros(dim), covs[i]) + np.log(weights[i])
+            # loglik_max = np.max(loglik, axis = 1)
+            # loglik = loglik - loglik_max[:, np.newaxis]
+            # loglik = loglik + loglik_max[:, np.newaxis]
+            loglik = np.exp(loglik)
+            loglik = loglik / np.sum(loglik, axis = 1)[:, np.newaxis]
+            # M-step
+            weights = np.sum(loglik, axis = 0) / n
+            for i in range(n_comps):
+                for j in range(n):
+                    gs[i] += loglik[j, i] * data[j].T @ cov0 @ data[j]
+                gs[i] = covs[i] / (np.sum(loglik[:, i]) * self.dim)
+        self.n_comps = n_comps
+        self.weights = weights
+        self.covs = covs
+        return weights, covs
