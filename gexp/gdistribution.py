@@ -62,15 +62,18 @@ class mix_normal():
         n = data.shape[0]
         weights = np.ones(n_comps) / n_comps
         gs = nr.uniform(1,10,n_comps)
+        det0 = np.linalg.det(cov0)
         covs = np.array([cov0 * gs[i] for i in range(n_comps)])
         quad = np.array([data[i].T @ np.linalg.inv(cov0) @ data[i] for i in range(n)])
         for itr in range(max_itr):
-            print(itr, weights, gs, weights.sum())
+            if (itr+1) % 10 == 0:
+                print(itr+1, weights, gs, weights.sum())
             # E-step
             loglik = np.zeros((n, n_comps))
             for i in range(n_comps):
                 for j in range(n):
-                    loglik[j, i] = jss.multivariate_normal.pdf(data[j], np.zeros(dim), covs[i])*weights[i]
+                    llk = np.log(weights[i]) - 0.5 * (dim * np.log(2*np.pi*gs[i]) + np.log(det0) + quad[j] /gs[i])
+                    loglik[j,i] = np.exp(llk)
                     if loglik[j, i] < 1e-10:
                         loglik[j, i] = 1e-10
             # loglik_max = np.max(loglik, axis = 1)
@@ -83,8 +86,9 @@ class mix_normal():
                 for j in range(n):
                     gs[i] += loglik[j, i] * quad[j]
                 gs[i] = gs[i] / (np.sum(loglik[:, i]) * self.dim)
-                covs[i] = cov0 * gs[i]
+        covs = np.array([cov0 * gs[i] for i in range(n_comps)])
         self.n_comps = n_comps
         self.weights = weights
+        self.gs = gs
         self.covs = covs
-        return weights, covs
+        return weights, covs, gs

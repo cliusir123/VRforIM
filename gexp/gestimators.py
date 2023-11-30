@@ -33,6 +33,10 @@ class Estimator():
         Main = self.F(self.X)
         Poisson_cv = self.Acpt * (self.F(self.Y) - self.F(self.X))
         Static_cv = self.F(self.Y) - self.analy
+        print(np.cov(Main, Poisson_cv))
+        print(np.cov(Poisson_cv, Static_cv))
+        print(np.corrcoef(Main, Poisson_cv))
+        print(np.corrcoef(Poisson_cv, Static_cv))
         IMH_estimator = Main + Poisson_cv - Static_cv
         return IMH_estimator.mean(), IMH_estimator.var()
     
@@ -72,10 +76,11 @@ class Estimator():
         return Main.mean(), Main.var()
 
 class BF(Estimator):
-    def __init__(self, sample_size, coefs, covs, inputs, outputs) -> None:
+    def __init__(self, sample_size, coefs, cov0, gs, inputs, outputs) -> None:
         super().__init__(sample_size)
         self.coefs = coefs
-        self.covs = covs
+        self.gs = gs
+        self.cov0 = cov0
         self.inputs = inputs
         self.outputs = outputs
         # self.analytics()
@@ -102,23 +107,17 @@ class BF(Estimator):
         return lik
     
     def analytics(self):
-        mc = mix_normal(self.inputs.shape[1])
-        mc.set_parameters(len(self.coefs), self.coefs, self.covs)
-        data = mc.sampler(20000)
-        return np.mean(self.F(data))
-        # def integrand(beta):
-        #     beta0 = beta[0]
-        #     beta1 = beta[1]
-        #     beta2 = beta[2]
-        #     fun = 1
-        #     for i in range(len(self.outputs)):
-        #         fun *= distrax.Bernoulli(logits=self.inputs[i][0]*beta0+self.inputs[i]*beta1+self.inputs[i][2]*beta2).prob(self.outputs[i])
-        #     fun = fun * distrax.Normal(loc=0, scale=100).prob(beta2)
-        #     for i in range(len(self.coefs)):
-        #         scale = jnp.linalg.cholesky(self.covs[i])
-        #         fun = fun * distrax.MultivariateNormal(loc=jnp.zeros(len(beta)-1), scale_tril=scale).prob(beta[1:]) * self.coefs[i]
-        #     return 
-        # self.analy = integrate.quad(integrand, -jnp.inf, jnp.inf)[0]
-
+        s = 2.5
+        dim = self.cov0.shape[0]
+        N = len(self.outputs)
+        const = (2*np.pi)**(-N/2)*s**(-N)*np.exp(-0.5*s**(-2)*np.sum(self.outputs**2))
+        t = np.sum(self.outputs[:, np.newaxis]* self.inputs, axis=0)
+        expcoef = 0.5*s**(-2)*(t.T @ self.cov0 @ t)
+        def integrant(x):
+            return const*np.exp(expcoef * x / (x+s**2)) *(1+x/s**2)**(-dim/2) * (1+x)**(-2)
+        analy = 0
+        for i in range(len(self.coefs)):
+            analy += self.coefs[i]*integrant(self.gs[i])
+        return analy
 
             
