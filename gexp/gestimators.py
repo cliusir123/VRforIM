@@ -33,10 +33,7 @@ class Estimator():
         Main = self.F(self.X)
         Poisson_cv = self.Acpt * (self.F(self.Y) - self.F(self.X))
         Static_cv = self.F(self.Y) - self.analy
-        print(np.cov(Main, Poisson_cv))
-        print(np.cov(Poisson_cv, Static_cv))
-        print(np.corrcoef(Main, Poisson_cv))
-        print(np.corrcoef(Poisson_cv, Static_cv))
+        # IMH_estimator = Static_cv
         IMH_estimator = Main + Poisson_cv - Static_cv
         return IMH_estimator.mean(), IMH_estimator.var()
     
@@ -52,11 +49,11 @@ class Estimator():
         denominator = np.sum((Main[0 : sample_len - 1] - PG_estimator[1 : sample_len]) ** 2) / sample_len
         coef = numerator / denominator
 
-        print(np.cov(Main, Poisson_cv))
-        print(np.cov(Poisson_cv, Static_cv))
-        print(np.corrcoef(Main, Poisson_cv))
-        print(np.corrcoef(Poisson_cv, Static_cv))
-        print(coef, coef_2)
+        # print(np.cov(Main, Poisson_cv))
+        # print(np.cov(Poisson_cv, Static_cv))
+        # print(np.corrcoef(Main, Poisson_cv))
+        # print(np.corrcoef(Poisson_cv, Static_cv))
+        # print(coef, coef_2)
 
         # PG_estimator = Main + Poisson_cv 
         # numerator = np.mean(Main * (Main + PG_estimator)) - np.mean(Main) * np.mean(Main + PG_estimator)
@@ -83,7 +80,7 @@ class BF(Estimator):
         self.cov0 = cov0
         self.inputs = inputs
         self.outputs = outputs
-        # self.analytics()
+        # self.analy = 6.749795e-54
         self.analy = self.analytics()
         print(self.analy)
     
@@ -99,11 +96,11 @@ class BF(Estimator):
     #     return X[:, 0]
 
     def F(self, X):
-        logits = self.inputs @ X.T
         lik = np.ones(X.shape[0])
+        N = self.inputs.shape[0]
         for i in range(X.shape[0]):
-            logi = logits[:,i] - self.outputs
-            lik[i] = np.exp(-0.5 * np.sum(logi**2) / 2.5**2)
+            loglik = - 0.5 * (N * np.log(2*np.pi) + N*np.log(2.5**2) + np.sum((self.outputs - self.inputs @ X[i])**2 )/2.5**2)
+            lik[i] = np.exp(loglik)
         return lik
     
     def analytics(self):
@@ -111,7 +108,7 @@ class BF(Estimator):
         dim = self.cov0.shape[0]
         N = len(self.outputs)
         const = (2*np.pi)**(-N/2)*s**(-N)*np.exp(-0.5*s**(-2)*np.sum(self.outputs**2))
-        t = np.sum(self.outputs[:, np.newaxis]* self.inputs, axis=0)
+        t = np.sum(self.outputs[:, np.newaxis] * self.inputs, axis=0)
         expcoef = 0.5*s**(-2)*(t.T @ self.cov0 @ t)
         def integrant(x):
             return const*np.exp(expcoef * x / (x+s**2)) *(1+x/s**2)**(-dim/2) * (1+x)**(-2)

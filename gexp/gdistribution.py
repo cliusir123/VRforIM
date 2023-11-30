@@ -10,6 +10,8 @@ class gprior():
     
     def set_parameters(self, cov0):
         self.cov0 = cov0
+        self.det = np.linalg.det(cov0)
+        self.inv = np.linalg.inv(cov0)
     
     def sampler(self, num):
         samples = []
@@ -28,9 +30,11 @@ class gprior():
         for i in range(n):
             w = nr.beta(1, 1)
             g = w / (1 - w)
-            cov = cov0 * g
+            dett = self.det * (g ** self.dim)
+            invv = self.inv / g
+            loglik = - 0.5 * (self.dim * jnp.log(2*jnp.pi) + jnp.log(dett) + x.T @ invv @ x)
             # cov = cov0
-            loglik += jss.multivariate_normal.pdf(x, jnp.zeros(self.dim), cov)
+            loglik += jnp.exp(loglik)
         return jnp.log(loglik / n)
 
 class mix_normal():
@@ -41,6 +45,8 @@ class mix_normal():
         self.n_comps = n_comps
         self.weights = weights
         self.covs = covs
+        self.dets = np.array([np.linalg.det(covs[i]) for i in range(n_comps)])
+        self.invs = np.array([np.linalg.inv(covs[i]) for i in range(n_comps)])
     
     def sampler(self, num):
         samples = []
@@ -53,7 +59,8 @@ class mix_normal():
     def logpdf(self, x):
         lik = 0
         for i in range(self.n_comps):
-            lik += jss.multivariate_normal.pdf(x, np.zeros(self.dim), self.covs[i]) * self.weights[i]
+            loglik = jnp.log(self.weights[i]) - 0.5 * (self.dim * jnp.log(2*jnp.pi) + jnp.log(self.dets[i]) + x.T @ self.invs[i] @ x)
+            lik += jnp.exp(loglik)
         loglik = jnp.log(lik)
         return loglik
 
