@@ -111,7 +111,7 @@ class BF(Estimator):
         t = np.sum(self.outputs[:, np.newaxis] * self.inputs, axis=0)
         expcoef = 0.5*s**(-2)*(t.T @ self.cov0 @ t)
         def integrant(x):
-            return const*np.exp(expcoef * x / (x+s**2)) *(1+x/s**2)**(-dim/2) * (1+x)**(-2)
+            return const*np.exp(expcoef * x / (x+s**2)) *(1+x/s**2)**(-dim/2)
         analy = 0
         for i in range(len(self.coefs)):
             analy += self.coefs[i]*integrant(self.gs[i])

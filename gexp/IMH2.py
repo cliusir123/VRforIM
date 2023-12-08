@@ -21,7 +21,7 @@ class IndMH():
         self.logtarget = self.target.logpdf
         self.logproposal = self.proposal.logpdf
         self.logtarget = jax.jit(self.logtarget)
-        # self.logproposal = jax.jit(self.logproposal)
+        self.logproposal = jax.jit(self.logproposal)
 
     def set_distribution_parameters(self, cov0, n_comps, weights, covs) -> None:
         self.cov = cov0

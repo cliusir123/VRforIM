@@ -3,6 +3,7 @@ import jax
 import jax.scipy.stats as jss
 import numpy as np
 import numpy.random as nr
+from numba import cuda
 
 class gprior():
     def __init__(self,dim) -> None:
@@ -73,7 +74,7 @@ class mix_normal():
         covs = np.array([cov0 * gs[i] for i in range(n_comps)])
         quad = np.array([data[i].T @ np.linalg.inv(cov0) @ data[i] for i in range(n)])
         for itr in range(max_itr):
-            if (itr+1) % 10 == 0:
+            if (itr+1) % 1000 == 0:
                 print(itr+1, weights, gs, weights.sum())
             # E-step
             loglik = np.zeros((n, n_comps))
@@ -83,9 +84,6 @@ class mix_normal():
                     loglik[j,i] = np.exp(llk)
                     if loglik[j, i] < 1e-10:
                         loglik[j, i] = 1e-10
-            # loglik_max = np.max(loglik, axis = 1)
-            # loglik = loglik - loglik_max[:, np.newaxis]
-            # loglik = loglik + loglik_max[:, np.newaxis]
             loglik = loglik / np.sum(loglik, axis = 1)[:, None]
             # M-step
             weights = np.sum(loglik, axis = 0) / n
