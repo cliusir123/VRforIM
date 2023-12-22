@@ -82,7 +82,6 @@ class BF(Estimator):
         self.outputs = outputs
         # self.analy = 6.749795e-54
         self.analy = self.analytics()
-        print(self.analy)
     
     # def F(self, X):
     #     logits = self.inputs @ X.T

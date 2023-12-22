@@ -5,49 +5,44 @@ import numpy as np
 import numpy.random as nr
 from numba import cuda
 
+
 class gprior():
     def __init__(self,dim) -> None:
         self.dim = dim
     
-    def set_parameters(self, cov0):
+    def set_parameters(self, cov0, input, g):
         self.cov0 = cov0
-        self.det = np.linalg.det(cov0)
-        self.inv = np.linalg.inv(cov0)
+        self.input = input
+        self.g = g
     
     def sampler(self, num):
         samples = []
         for i in range(num):
-            w = nr.beta(1, 1)
-            g = w / (1 - w)
-            cov = self.cov0 * g
-            # cov = cov0
+            cov = self.cov0 * self.g[i]
             beta = nr.multivariate_normal(np.zeros(self.dim), cov)
             samples.append(beta)
         return np.array(samples)
 
-    def logpdf(self, x, cov0):
-        n = 500
-        loglik = 0
-        for i in range(n):
-            w = nr.beta(1, 1)
-            g = w / (1 - w)
-            dett = self.det * (g ** self.dim)
-            invv = self.inv / g
-            loglik = - 0.5 * (self.dim * jnp.log(2*jnp.pi) + jnp.log(dett) + x.T @ invv @ x)
-            # cov = cov0
-            loglik += jnp.exp(loglik)
-        return jnp.log(loglik / n)
+    def logpdf(self, x):
+        n = 1000
+        self.g = self.g[:n]
+        v = self.input @ x.T
+        S = v.T @ v
+        logl = - 0.5 * (self.dim * jnp.log(self.g) + S / self.g)
+        logl = jax.scipy.special.logsumexp(logl)
+        return logl
 
 class mix_normal():
     def __init__(self, dim) -> None:
         self.dim = dim
+        
     
-    def set_parameters(self, n_comps, weights, covs):
+    def set_parameters(self, n_comps, weights, gs, covs, input):
         self.n_comps = n_comps
         self.weights = weights
+        self.gs = gs
+        self.input  = input
         self.covs = covs
-        self.dets = np.array([np.linalg.det(covs[i]) for i in range(n_comps)])
-        self.invs = np.array([np.linalg.inv(covs[i]) for i in range(n_comps)])
     
     def sampler(self, num):
         samples = []
@@ -58,29 +53,27 @@ class mix_normal():
         return np.array(samples)
     
     def logpdf(self, x):
-        lik = 0
-        for i in range(self.n_comps):
-            loglik = jnp.log(self.weights[i]) - 0.5 * (self.dim * jnp.log(2*jnp.pi) + jnp.log(self.dets[i]) + x.T @ self.invs[i] @ x)
-            lik += jnp.exp(loglik)
-        loglik = jnp.log(lik)
+        v = self.input @ x.T
+        S = v.T @ v
+        loglik = jnp.log(self.weights) - 0.5 * (self.dim * jnp.log(self.gs) + S / self.gs)
+        loglik = jax.scipy.special.logsumexp(loglik)
         return loglik
 
-    def em_algorithm(self, data, n_comps, cov0, max_itr = 1000):
+    def em_algorithm(self, data, n_comps, input, max_itr = 1000):
         dim = self.dim
         n = data.shape[0]
         weights = np.ones(n_comps) / n_comps
         gs = nr.uniform(1,10,n_comps)
-        det0 = np.linalg.det(cov0)
-        covs = np.array([cov0 * gs[i] for i in range(n_comps)])
-        quad = np.array([data[i].T @ np.linalg.inv(cov0) @ data[i] for i in range(n)])
+        ddet = np.linalg.det(np.linalg.inv(input.T @ input))
+        quad = np.array([data[i].T @ (input.T @ input) @ data[i] for i in range(n)])
         for itr in range(max_itr):
             if (itr+1) % 1000 == 0:
-                print(itr+1, weights, gs, weights.sum())
+                print(itr+1, weights, gs)
             # E-step
             loglik = np.zeros((n, n_comps))
             for i in range(n_comps):
                 for j in range(n):
-                    llk = np.log(weights[i]) - 0.5 * (dim * np.log(2*np.pi*gs[i]) + np.log(det0) + quad[j] /gs[i])
+                    llk = np.log(weights[i]) - 0.5 * (dim * np.log(2*np.pi*gs[i]) + np.log(ddet)+ quad[j] /gs[i])
                     loglik[j,i] = np.exp(llk)
                     if loglik[j, i] < 1e-10:
                         loglik[j, i] = 1e-10
@@ -91,9 +84,8 @@ class mix_normal():
                 for j in range(n):
                     gs[i] += loglik[j, i] * quad[j]
                 gs[i] = gs[i] / (np.sum(loglik[:, i]) * self.dim)
-        covs = np.array([cov0 * gs[i] for i in range(n_comps)])
         self.n_comps = n_comps
         self.weights = weights
         self.gs = gs
-        self.covs = covs
-        return weights, covs, gs
+        return weights, gs
+

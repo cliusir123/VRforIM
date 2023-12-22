@@ -23,15 +23,15 @@ class IndMH():
         self.logtarget = jax.jit(self.logtarget)
         self.logproposal = jax.jit(self.logproposal)
 
-    def set_distribution_parameters(self, cov0, n_comps, weights, covs) -> None:
+    def set_distribution_parameters(self, cov0, n_comps, weights, covs, input, g, gs) -> None:
         self.cov = cov0
-        self.target.set_parameters(cov0)
-        self.proposal.set_parameters(n_comps, weights, covs)
+        self.target.set_parameters(cov0, input, g)
+        self.proposal.set_parameters(n_comps, weights, gs, covs, input)
     
     def init_state(self) -> None:
         self.x0 = self.proposal.sampler(1)
         self.current = self.x0.reshape((self.dim,))
-        self.log_t = self.logtarget(self.current, self.cov)
+        self.log_t = self.logtarget(self.current)
         self.log_p = self.logproposal(self.current)
     
     def IMHsampling(self, num):
@@ -39,7 +39,7 @@ class IndMH():
         return sample_p
     
     def IMHstep(self, p_test):
-        log_t_new = self.logtarget(p_test, self.cov)
+        log_t_new = self.logtarget(p_test)
         log_p_new = self.logproposal(p_test)
         ratio_t = log_t_new - self.log_t
         ratio_p = log_p_new - self.log_p
