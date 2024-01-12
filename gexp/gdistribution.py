@@ -3,7 +3,6 @@ import jax
 import jax.scipy.stats as jss
 import numpy as np
 import numpy.random as nr
-from numba import cuda
 
 
 class gprior():
@@ -25,7 +24,9 @@ class gprior():
 
     def logpdf(self, x):
         n = 1000
-        self.g = self.g[:n]
+        w = nr.beta(1,1,n)
+        g = w/(1-w)
+        self.g = g
         v = self.input @ x.T
         S = v.T @ v
         logl = - 0.5 * (self.dim * jnp.log(self.g) + S / self.g)
@@ -63,7 +64,8 @@ class mix_normal():
         dim = self.dim
         n = data.shape[0]
         weights = np.ones(n_comps) / n_comps
-        gs = nr.uniform(1,10,n_comps)
+        w = nr.beta(1,1,n_comps)
+        gs = w/(1-w)
         ddet = np.linalg.det(np.linalg.inv(input.T @ input))
         quad = np.array([data[i].T @ (input.T @ input) @ data[i] for i in range(n)])
         for itr in range(max_itr):
