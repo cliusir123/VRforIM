@@ -5,7 +5,7 @@ import jax.numpy as jnp
 import jax
 import optax
 import haiku as hk
-from Distributions import student_t, multivariate_normal, Stochastic_Volatility, Bayesian_Logistic_Regression
+from Distributions import student_t, multivariate_normal, Stochastic_Volatility, Bayesian_Logistic_Regression,GP_Regression
 
 class Basic_settings():
     def __init__(
@@ -23,7 +23,8 @@ class Basic_settings():
         self.proposal_str = proposal_str
         self.itrnum = itrnum
         self.dim = dim
-        self.learning_rate = learning_rate
+        self.lr_l = learning_rate
+        self.lr_m = learning_rate * 10
         self.model = model
         self.df = df
         if self.target_str == 'multivariate_normal':
@@ -104,11 +105,18 @@ class Basic_settings():
         return obj_fun
     
 
-    def optimization_init(self, not_fix_mean = False):
-        if not_fix_mean:
-            self.optimizer_mean = optax.adam(self.learning_rate * 10)
-            self.opt_state_mean = self.optimizer_mean.init(self.p_mean)
-        self.optimizer_L = optax.adam(self.learning_rate)
+    def optimization_init(self):
+        # schedule_m = optax.constant_schedule(self.lr_m)
+        # schedule_l = optax.constant_schedule(self.lr_l)
+        # schedule_m = self.lr_m
+        # schedule_l = self.lr_l
+        decay_steps = 2000
+        decay_rate = 0.2
+        schedule_m = optax.exponential_decay(init_value=self.lr_m, transition_steps=decay_steps, decay_rate=decay_rate, staircase=True)
+        schedule_l = optax.exponential_decay(init_value=self.lr_l, transition_steps=decay_steps, decay_rate=decay_rate, staircase=True)
+        self.optimizer_mean = optax.adam(schedule_m)
+        self.optimizer_L = optax.adam(schedule_l)
+        self.opt_state_mean = self.optimizer_mean.init(self.p_mean)
         self.opt_state_L = self.optimizer_L.init(self.adp_L)
         self.obj_grad = jax.grad(self.objective_function)
 
@@ -117,13 +125,15 @@ class Basic_settings():
         self.cur_grad = self.obj_grad(adp_sample)
         self.grad_val += self.cur_grad / self.batch_size
         self.grad_L += (self.cur_grad.reshape((self.dim,1)) @ epsilon.reshape((1,self.dim)) + jnp.diag(1 / jnp.diag(self.adp_L))) / self.batch_size
+        # v = jax.lax.linalg.triangular_solve(self.adp_L, adp_sample - self.p_mean, left_side=True, lower=True)
+        # u = jax.lax.linalg.triangular_solve(self.adp_L.T, v, left_side=True, lower=True)
+        # self.grad_L += (self.cur_grad.reshape((self.dim,1)) + u.reshape((self.dim,1))) @ epsilon.reshape((1,self.dim)) / self.batch_size
         self.cum_obj += (self.objective_function(adp_sample) + jnp.sum(jnp.log(jnp.diag(self.adp_L)))) / self.batch_size
         
     
-    def optimization_update(self, not_fix_mean = False):
-        if not_fix_mean:
-            updates, self.opt_state_mean = self.optimizer_mean.update(-self.grad_val, self.opt_state_mean)
-            self.p_mean = optax.apply_updates(self.p_mean, updates)
+    def optimization_update(self):
+        updates, self.opt_state_mean = self.optimizer_mean.update(-self.grad_val, self.opt_state_mean)
+        self.p_mean = optax.apply_updates(self.p_mean, updates)
         updates, self.opt_state_L = self.optimizer_L.update(-self.grad_L, self.opt_state_L)
         self.adp_L = optax.apply_updates(self.adp_L, updates)
 
@@ -168,14 +178,14 @@ class BAIM(Basic_settings):
         loss = np.zeros(self.n_batch)
         pmeans = np.zeros((self.itrnum, self.dim))
         pSigs = np.zeros((self.itrnum, self.dim))
+        pSigs_full = np.zeros((self.itrnum, self.dim, self.dim))
 
         self.init_state()
-        self.optimization_init(True)
+        self.optimization_init()
 
         #IM iterations
         for i in range(self.itrnum):
             if i % self.batch_size == 0:
-                print('\r', end = str(int(i / self.batch_size + 1)) + '/'+ str(self.n_batch) + ' batches adapted !')
                 pro_sample, adp_sample, epsilon = self.IMHsampling(self.batch_size)
 
             #IM iteration
@@ -187,20 +197,20 @@ class BAIM(Basic_settings):
             p_sample[i] = pro_sample[pos]
             acceptance_rate[i] = np.reshape(a, ())
             is_acc[i] = is_a
-            logtar[i] = self.log_t     
+            logtar[i] = self.log_t
             pmeans[i] = jnp.reshape(self.p_mean, (self.dim,))
             pSigs[i] = jnp.diag(self.p_L @ self.p_L.T)
+            pSigs_full[i] = self.p_L @ self.p_L.T
 
             if (i + 1) % self.batch_size == 0:
-                self.optimization_update(True)
+                self.optimization_update()
                 pos = int((i + 1) / self.batch_size - 1)
                 loss[pos] = self.cum_obj
                 self.grad_val = 0
                 self.grad_L = 0
                 self.cum_obj = 0
                 # self.learning_rate = self.learning_rate_init / (1 + 0.02 * (i + 1) / self.batch_size)
-        print(pSigs.shape)
-        return t_sample, p_sample, acceptance_rate, (pmeans,pSigs), loss,  logtar, is_acc
+        return t_sample, p_sample, acceptance_rate, (pmeans,pSigs), loss,  logtar, is_acc, pSigs_full
 
 class IndMH(Basic_settings):
     def __init__(self,
@@ -208,34 +218,39 @@ class IndMH(Basic_settings):
         proposal_str: str = 'multivariate_normal',
         itrnum: int = 10000,
         dim : int = 16,
-        learning_rate: float = 0.01,
+        learning_rate: int=0,
         model: Optional[Stochastic_Volatility] = None,
-        df : Optional[float] = 3
+        df : Optional[float] = 3,
+        value: int = 10
         ):
-        super().__init__(target_str, proposal_str, itrnum, dim,learning_rate, model, df)
-    
+        super().__init__(target_str, proposal_str, itrnum, dim,learning_rate, model, df, value)
     
     def IMH(self) -> Tuple[np.ndarray,...]:
        #initialize arrays
         t_sample = np.zeros((self.itrnum, self.dim))
         acceptance_rate = np.zeros(self.itrnum)
         is_acc = np.zeros(self.itrnum)
+        pmeans = np.zeros((self.itrnum, self.dim))
+        pSigs = np.zeros((self.itrnum, self.dim))
+        pSigs_full = np.zeros((self.itrnum, self.dim, self.dim))
 
         self.init_state()
         #IMH iterations
         p_sample , _= self.IMHsampling(self.itrnum, False)
         for i in range(self.itrnum):
-                
-            a, is_a = self.IMHstep(p_sample[i])          
 
-            #update
             t_sample[i] = self.current.reshape((self.dim,))
+
+            a, is_a = self.IMHstep(p_sample[i])          
+            #update
+            
             acceptance_rate[i] = np.reshape(a,())
             is_acc[i] = is_a
-            print('\r', end = str(i) + '/'+ str(self.itrnum) + ' finished !')
-        print('The average acceptance probability is: ', np.mean(is_acc))
+            pmeans[i] = jnp.reshape(self.p_mean, (self.dim,))
+            pSigs[i] = jnp.diag(self.p_L @ self.p_L.T)
+            pSigs_full[i] = self.p_L @ self.p_L.T
 
-        return t_sample, p_sample, acceptance_rate, is_acc
+        return t_sample, p_sample, acceptance_rate,(pmeans,pSigs_full), is_acc
     
 
 class adp_only(Basic_settings):
@@ -257,7 +272,7 @@ class adp_only(Basic_settings):
     def adp(self, nfm):
         loss = np.zeros(self.n_batch)
         self.init_state()
-        self.optimization_init(not_fix_mean=nfm)
+        self.optimization_init()
         for i in range(self.itrnum):
             if i % self.batch_size == 0:
                 print('\r', end = str(int(i / self.batch_size + 1)) + '/'+ str(self.n_batch) + ' batches adapted !')
@@ -267,7 +282,7 @@ class adp_only(Basic_settings):
             self.optimization_collect(p_sample[pos], epsilon[pos])
 
             if (i + 1) % self.batch_size == 0:
-                self.optimization_update(not_fix_mean=nfm)
+                self.optimization_update()
                 pos = int((i + 1) / self.batch_size - 1)
                 loss[pos] = self.cum_obj
                 self.grad_val = 0

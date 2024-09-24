@@ -43,8 +43,8 @@ class Estimator():
         Static_cv = self.F(self.Y) - self.analy
         sample_len =  len(self.X)
         # coef_2 = np.sum((Static_cv - np.mean(Static_cv))*(Poisson_cv - np.mean(Poisson_cv)))/np.sum((Static_cv - np.mean(Static_cv))**2)
-        coef_2 = np.cov(Poisson_cv, Static_cv)[0,1] / np.var(Static_cv)
-        PG_estimator = Main + Poisson_cv - coef_2 * Static_cv
+        # coef_2 = np.cov(Poisson_cv, Static_cv)[0,1] / np.var(Static_cv)
+        PG_estimator = Main + Poisson_cv - Static_cv
         numerator = np.mean(Main * (Main + PG_estimator)) - np.mean(Main) * np.mean(Main + PG_estimator)
         denominator = np.sum((Main[0 : sample_len - 1] - PG_estimator[1 : sample_len]) ** 2) / sample_len
         coef = numerator / denominator
@@ -60,7 +60,7 @@ class Estimator():
         # denominator = np.sum((Main[0 : sample_len - 1] - PG_estimator[1 : sample_len]) ** 2) / sample_len
         # coef = numerator / denominator
 
-        IMH_estimator = Main + coef * (Poisson_cv - coef_2 * Static_cv)
+        IMH_estimator = Main + coef * (Poisson_cv - Static_cv)
         return IMH_estimator.mean(), IMH_estimator.var()
     
     def IM(self):  

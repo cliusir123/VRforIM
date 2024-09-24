@@ -48,6 +48,28 @@ class multivariate_normal(DisBase):
         v = jax.lax.linalg.triangular_solve(args[2], args[0] - args[1], left_side=True, lower=True)
         logp = - 0.5 * jnp.sum(v * v)
         return logp
+
+class mixture_normal(DisBase):
+    def __init__(self,
+                 dim: int = 100,
+                 value: int = 10,
+                 n_comp: int = 3) -> None:
+        super().__init__(dim, value)
+        self.n_comp = n_comp
+
+    def sampler(self, *args): #args: 0 loc 1 scale 2 weight 3 number
+        z = nr.choice(self.n_comp, args[2])
+        epsilon = jax.random.normal(next(self.rng_seq), shape = [self.dim, args[3]])
+        x = args[1][z] @ epsilon + args[0][z].reshape((self.dim,1))
+        return x.T, epsilon.T
+
+    def logpdf(self, *args): #args: 0 data 1 loc 2 scale 3 weight
+        logp = jnp.zeros(self.n_comp)
+        for i in range(self.n_comp):
+            v = jax.lax.linalg.triangular_solve(args[2][i], args[0] - args[1][i], left_side=True, lower=True)
+            logpi = logpi.at[i].set(jnp.log(self.weights[i]) - 0.5 * (jnp.sum(v * v)) - jnp.log(jnp.prod(jnp.diag(self.chol[i]))))
+        logp = jax.scipy.special.logsumexp(logp)
+        return logp
     
 
 class lognormal(DisBase):

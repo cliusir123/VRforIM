@@ -1,6 +1,7 @@
 import jax.numpy as jnp
 import jax
 import jax.scipy.stats as jss
+from scipy.stats import norm
 import numpy as np
 import numpy.random as nr
 
@@ -30,6 +31,7 @@ class gprior():
         v = self.input @ x.T
         S = v.T @ v
         logl = - 0.5 * (self.dim * jnp.log(self.g) + S / self.g)
+        # logl = jnp.mean(logl)
         logl = jax.scipy.special.logsumexp(logl)
         return logl
 
@@ -89,5 +91,31 @@ class mix_normal():
         self.n_comps = n_comps
         self.weights = weights
         self.gs = gs
+        return weights, gs
+    
+    def em_algorithm_1d(self, data, n_comps, max_itr = 1000):
+        n = data.shape[0]
+        weights = np.ones(n_comps) / n_comps
+        w = nr.beta(1,1,n_comps)
+        gs = w/(1-w)
+        stds = np.sqrt(gs)
+        for itr in range(max_itr):
+            if (itr+1) % 1000 == 0:
+                print(itr+1, weights, gs)
+            # E-step
+            wei = np.zeros((n_comps, n))
+            for k in range(n_comps):
+                wei[k] = np.log(weights[k]) - 0.5 * np.log(gs[k]) - 0.5 * (data**2 / gs[k])
+            wei = np.exp(wei)
+            
+            print(wei)
+            weights_sum = np.sum(wei, axis=0)
+            print(weights_sum)
+            responsibilities = wei / weights_sum
+            weights = np.mean(responsibilities, axis=1)
+            stds = np.array([np.sqrt(np.sum(responsibilities[k] * data**2) / np.sum(responsibilities[k])) for k in range(n_comps)])
+        self.n_comps = n_comps
+        self.weights = weights
+        self.gs = stds**2
         return weights, gs
 
