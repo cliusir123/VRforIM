@@ -157,7 +157,7 @@ class Bayesian_Logistic_Regression(DisBase):
         super().__init__(dim)
 
     def load_data(self, dataset):
-        file = "/home/ranbot/optionpricing/data/" + dataset + ".mat"
+        file = "/home/ranbot/VRforIM/data/" + dataset + ".mat"
         mat = scipy.io.loadmat(file)
         data = mat['X']
         if (dataset == 'caravan' or dataset == 'pima' or dataset == 'ripley' or dataset == 'australian'):
@@ -189,7 +189,7 @@ class GP_Regression(DisBase):
         super().__init__()
 
     def load_data(self, dataset):
-        file  = "/home/ranbot/optionpricing/data/" + dataset + ".mat"
+        file  = "/home/ranbot/VRforIM/data/" + dataset + ".mat"
         mat = scipy.io.loadmat(file)
         if dataset == 'pendulum':
             self.Xtrain = mat['X_tr']

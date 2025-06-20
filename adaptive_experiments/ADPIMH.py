@@ -110,7 +110,7 @@ class Basic_settings():
         # schedule_l = optax.constant_schedule(self.lr_l)
         # schedule_m = self.lr_m
         # schedule_l = self.lr_l
-        decay_steps = 2000
+        decay_steps = 4000
         decay_rate = 0.2
         schedule_m = optax.exponential_decay(init_value=self.lr_m, transition_steps=decay_steps, decay_rate=decay_rate, staircase=True)
         schedule_l = optax.exponential_decay(init_value=self.lr_l, transition_steps=decay_steps, decay_rate=decay_rate, staircase=True)

@@ -28,30 +28,30 @@ class Estimator():
         else:
             self.paras = paras[-self.sample_size:]
     
-    def Main(self):
-        return self.F(self.X[1:])
+    def Main(self,start, end):
+        return self.F(self.X[1 + start:end])
 
-    def Poisson_cv(self):
-        return self.Acpt[1:] * (self.F(self.Y[1:]) - self.F(self.X[1:]))
+    def Poisson_cv(self,start,end):
+        return self.Acpt[1+start:end] * (self.F(self.Y[1+start:end]) - self.F(self.X[1+start:end]))
     
-    def Static_cv(self, coupled = False):
+    def Static_cv(self, start,end,coupled = False):
         if coupled:
             try:
-                return self.F_approx(self.Y[:-1]) - self.analytics(self.paras[:-1])
+                return self.F_approx(self.Y[start:end-1]) - self.analytics(self.paras[start:end-1])
             except:
-                return self.F_approx(self.Y[:-1]) - self.analytics(self.paras[0][:-1], self.paras[1][:-1])
+                return self.F_approx(self.Y[start:end-1]) - self.analytics(self.paras[0][start:end-1], self.paras[1][start:end-1])
         else:
             try:
-                return self.F_approx(self.Y[1:]) - self.analytics(self.paras[1:])
+                return self.F_approx(self.Y[1 + start:end]) - self.analytics(self.paras[1 + start:end])
             except:
-                return self.F_approx(self.Y[1:]) - self.analytics(self.paras[0][1:], self.paras[1][1:])
+                return self.F_approx(self.Y[1 + start:end]) - self.analytics(self.paras[0][1 + start:end], self.paras[1][1 + start:end])
 
 
 
     def IMCV_coef(self):
-        Main = self.Main()
-        Poisson_cv = self.Poisson_cv()
-        Static_cv = self.Static_cv(False)
+        Main = self.Main(0, self.sample_size+1)
+        Poisson_cv = self.Poisson_cv(0, self.sample_size+1)
+        Static_cv = self.Static_cv(0,self.sample_size+1,False)
         sample_len =  len(Main)
         coef_2 = np.cov(Poisson_cv, Static_cv)[0,1] / np.var(Static_cv)
         PG_estimator = Main + Poisson_cv - coef_2 * Static_cv
@@ -62,21 +62,21 @@ class Estimator():
         return IMH_estimator.mean(), coef, coef_2
 
     def IMCV(self):
-        Main = self.Main()
-        Poisson_cv = self.Poisson_cv()
-        Static_cv = self.Static_cv(False)
+        Main = self.Main(0, self.sample_size+1)
+        Poisson_cv = self.Poisson_cv(0, self.sample_size+1)
+        Static_cv = self.Static_cv(0,self.sample_size+1,False)
         IMH_estimator = Main + Poisson_cv - Static_cv
         return IMH_estimator.mean()
     
     def IMCV_poisson(self):
-        Main = self.Main()
-        Poisson_cv = self.Poisson_cv()
+        Main = self.Main(0, self.sample_size+1)
+        Poisson_cv = self.Poisson_cv(0, self.sample_size+1)
         IMH_estimator = Main + Poisson_cv
         return IMH_estimator.mean()
     
     def IMCV_static(self):
-        Main = self.Main()
-        Static_cv = self.Static_cv(True)
+        Main = self.Main(0, self.sample_size+1)
+        Static_cv = self.Static_cv(0,self.sample_size+1,True)
         sample_len =  len(Main)
         PG_estimator = Main - Static_cv
         numerator = np.mean(Main * (Main + PG_estimator)) - np.mean(Main) * np.mean(Main + PG_estimator)
@@ -93,11 +93,12 @@ class Estimator():
     def Batch_coef(self):
         Bimhcv = np.zeros(self.n_batch)
         for i in range(self.n_batch - 1):
-            start = i * self.batch_size + 1
-            end = (i + 1) * self.batch_size
-            Main = self.F(self.X[start : end])
-            Poisson_cv = self.Acpt[start : end] * (self.F(self.Y[start : end]) - self.F(self.X[start : end]))
-            Static_cv = self.F_approx(self.Y[start : end]) - self.analytics(self.paras[start : end])
+            start = i * self.batch_size
+            end = (i + 1) * self.batch_size+1
+
+            Main = self.Main(start, end)
+            Poisson_cv = self.Poisson_cv(start, end)
+            Static_cv = self.Static_cv(start,end,False)
             coef_2 = np.cov(Poisson_cv, Static_cv)[0,1] / np.var(Static_cv)
             PG_estimator = Main + Poisson_cv - coef_2*Static_cv
             length = len(Main)
@@ -110,31 +111,31 @@ class Estimator():
     def BatchIMCV(self):
         Bimhcv = np.zeros(self.n_batch)
         for i in range(self.n_batch - 1):
-            start = i * self.batch_size + 1
-            end = (i + 1) * self.batch_size
-            Main = self.F(self.X[start : end])
-            Poisson_cv = self.Acpt[start : end] * (self.F(self.Y[start : end]) - self.F(self.X[start : end]))
-            Static_cv = self.F_approx(self.Y[start : end]) - self.analytics(self.paras[start : end])
+            start = i * self.batch_size
+            end = (i + 1) * self.batch_size+1
+            Main = self.Main(start, end)
+            Poisson_cv = self.Poisson_cv(start, end)
+            Static_cv = self.Static_cv(start,end,False)
             Bimhcv[i] = np.mean(Main + Poisson_cv - Static_cv)
         return Bimhcv.mean()
     
     def BatchIMCV_poisson(self):
         Bimhcv = np.zeros(self.n_batch)
         for i in range(self.n_batch - 1):
-            start = i * self.batch_size + 1
-            end = (i + 1) * self.batch_size
-            Main = self.F(self.X[start : end])
-            Poisson_cv = -self.Acpt[start : end] * self.F(self.Y[start : end]) + self.analytics(self.paras[start : end])
+            start = i * self.batch_size
+            end = (i + 1) * self.batch_size+1
+            Main = self.Main(start, end)
+            Poisson_cv = self.Poisson_cv(start, end)
             Bimhcv[i] = np.mean(Main + Poisson_cv)
         return Bimhcv.mean()
     
     def BatchIMCV_static(self):
         Bimhcv = np.zeros(self.n_batch)
         for i in range(self.n_batch - 1):
-            start = i * self.batch_size + 1
-            end = (i + 1) * self.batch_size
-            Main = self.F(self.X[start : end])
-            Static_cv = self.F_approx(self.Y[start-1 : end-1]) - self.analytics(self.paras[start-1 : end-1])
+            start = i * self.batch_size
+            end = (i + 1) * self.batch_size+1
+            Main = self.Main(start, end)
+            Static_cv = self.Static_cv(start,end,True)
             coef = np.cov(Main, Static_cv)[0,1] / np.var(Static_cv)
             Bimhcv[i] = np.mean(Main - coef * Static_cv)
         return Bimhcv.mean(), coef
