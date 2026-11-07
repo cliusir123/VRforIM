@@ -1,3 +1,4 @@
+import inspect
 import numpy as np
 
 class Estimator():
@@ -19,14 +20,36 @@ class Estimator():
         self.X = X[-self.sample_size:]
         self.Y = Y[-self.sample_size:]
         self.Acpt = Acpt[-self.sample_size:]
-        if type(paras) == tuple:
+        if isinstance(paras, tuple):
             pMeans = paras[0][-self.sample_size:]
             pCov = paras[1][-self.sample_size:]
-            self.paras=[pMeans, pCov]
+            self.paras = (pMeans, pCov)
         elif len(paras) == 1:
             self.paras = paras
         else:
             self.paras = paras[-self.sample_size:]
+
+    def _analytics_eval(self, start, end, coupled):
+        y_slice = slice(start, end - 1) if coupled else slice(1 + start, end)
+        y_data = self.Y[y_slice]
+        n_args = len(inspect.signature(self.analytics).parameters)
+
+        if isinstance(self.paras, tuple):
+            paras = tuple(param[y_slice] for param in self.paras)
+        else:
+            paras = self.paras[y_slice]
+
+        if n_args == 1:
+            if isinstance(paras, tuple):
+                paras = paras[0]
+            return self.F_approx(y_data) - self.analytics(paras)
+
+        if n_args == 2:
+            if not isinstance(paras, tuple):
+                raise ValueError("analytics expects mean and covariance parameters")
+            return self.F_approx(y_data) - self.analytics(paras[0], paras[1])
+
+        raise ValueError("analytics must accept one or two arguments")
     
     def Main(self,start, end):
         return self.F(self.X[1 + start:end])
@@ -35,16 +58,7 @@ class Estimator():
         return self.Acpt[1+start:end] * (self.F(self.Y[1+start:end]) - self.F(self.X[1+start:end]))
     
     def Static_cv(self, start,end,coupled = False):
-        if coupled:
-            try:
-                return self.F_approx(self.Y[start:end-1]) - self.analytics(self.paras[start:end-1])
-            except:
-                return self.F_approx(self.Y[start:end-1]) - self.analytics(self.paras[0][start:end-1], self.paras[1][start:end-1])
-        else:
-            try:
-                return self.F_approx(self.Y[1 + start:end]) - self.analytics(self.paras[1 + start:end])
-            except:
-                return self.F_approx(self.Y[1 + start:end]) - self.analytics(self.paras[0][1 + start:end], self.paras[1][1 + start:end])
+        return self._analytics_eval(start, end, coupled)
 
 
 

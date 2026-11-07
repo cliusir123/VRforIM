@@ -276,7 +276,7 @@ class OptimizerSettings:
         self.p_L = optax.apply_updates(self.p_L, updates)
 
         self.p_L = jnp.tril(self.p_L)
-        bounded_diag = jnp.clip(jnp.diag(self.p_L), a_min=0.001, a_max=1000.0)
+        bounded_diag = jnp.clip(jnp.diag(self.p_L), 0.001, 1000.0)
         self.p_L = self.p_L - jnp.diag(jnp.diag(self.p_L)) + jnp.diag(bounded_diag)
 
 def generate_proposal_list_from_optimizer(

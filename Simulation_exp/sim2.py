@@ -2,196 +2,187 @@ import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import numpy as np
-from scipy.stats import norm, t, multivariate_normal
-from statsmodels.graphics.tsaplots import plot_acf
+from scipy.stats import norm, t as tdist
+from scipy.special import gammaln
+from scipy import integrate
 
-def independent_metropolis(n, target_density, proposal_density, proposal_sampler, burnin=100):
-    """
-    Independent Metropolis-Hastings algorithm
-    
-    Parameters:
-    n: number of samples to generate
-    target_density: target distribution density function
-    proposal_density: proposal distribution density function
-    proposal_sampler: function to sample from proposal distribution
-    burnin: number of burn-in samples to discard
-    
-    Returns:
-    X_samples: accepted samples (excluding burn-in)
-    Y_proposals: proposal samples (excluding burn-in)
-    alphas: acceptance probabilities (excluding burn-in)
-    """
+
+# ---------------------------------------------------------------------------
+# Sampler
+# ---------------------------------------------------------------------------
+def independent_metropolis(n, target_density, proposal_density, proposal_sampler,
+                           burnin=100):
     total_n = n + burnin
-    # Generate all proposal samples upfront
     Y_proposals = proposal_sampler(size=total_n)
     pi_y = target_density(Y_proposals)
     q_y = proposal_density(Y_proposals)
 
-    # Initialize with a sample from proposal
     x = proposal_sampler(1)
     pi_x = target_density(x)
     q_x = proposal_density(x)
 
     X_samples = [x]
     alphas = []
-    
-    # Metropolis-Hastings iterations
     for i in range(total_n):
         y = Y_proposals[i]
-        # Calculate acceptance probability
         alpha = min(1, (pi_y[i] * q_x) / (pi_x * q_y[i]))
-        
-        # Accept or reject based on acceptance probability
         if np.random.rand() < alpha:
             x = y
             pi_x = pi_y[i]
             q_x = q_y[i]
-        
         X_samples.append(x)
         alphas.append(alpha)
 
-    # Return samples excluding burn-in period
     return np.array(X_samples[-n-1:-1]), Y_proposals[-n:], np.array(alphas[-n:])
 
-def imcv_estimator(F, Fapprox, X, Y, alpha, eq_f):
-    """
-    Improved Monte Carlo Variance (IMCV) estimator
-    
-    Parameters:
-    F: target function to estimate expectation of
-    Fapprox: approximation function
-    X: accepted samples
-    Y: proposal samples
-    alpha: acceptance probabilities
-    eq_f: expected value of Fapprox under target distribution
-    
-    Returns:
-    IMCV estimate of E[F(X)]
-    """
-    l = len(X)
+
+# ---------------------------------------------------------------------------
+# Estimator: plain IMCV, c1 = c2 = 1 (the estimator covered by Theorem 2.3)
+# ---------------------------------------------------------------------------
+def imcv_estimator_plain(F, Fapprox, X, Y, alpha, eq_f):
     fX = F(X)
     fY = F(Y)
     fapp = Fapprox(Y)
-
-    # Calculate control variate coefficient b_2
-    b_2 = np.cov(alpha * (fY - fX), (fapp - eq_f))[0,1] / np.var((fapp - eq_f))
-    
-    # Calculate control variate
-    pg = fX + alpha * (fY - fX) - b_2 * (fapp - eq_f)
-    
-    # Calculate coefficient b_1 for variance reduction
-    numerator = np.mean(fX * (fX + pg)) - np.mean(fX) * np.mean(fX + pg)
-    denominator = np.sum((fX[0 : l - 1] - pg[1 : l]) ** 2) / l
-    b_1 = numerator / denominator
-
-    # Calculate final IMCV estimate
-    delta = b_1* (alpha * (fY - fX) - b_2*(fapp - eq_f))
+    delta = alpha * (fY - fX) - (fapp - eq_f)
     return np.mean(fX + delta)
 
-def estimate(n, m, F, Fapp, eq_f, target_density, proposal_density, proposal_sampler):
-    """
-    Run multiple independent IMCV estimations
-    
-    Parameters:
-    n: number of samples per estimation
-    m: number of independent estimations
-    F: target function
-    Fapp: approximation function
-    eq_f: expected value of Fapp
-    target_density: target distribution
-    proposal_density: proposal distribution
-    proposal_sampler: proposal sampler
-    
-    Returns:
-    Array of m IMCV estimates
-    """
-    imcv_estimates = []
 
+def estimate(n, m, F, Fapp, eq_f, target_density, proposal_density,
+             proposal_sampler):
+    imcv_estimates = []
     for _ in range(m):
-        # Generate samples using Independent Metropolis
         X, Y, alpha = independent_metropolis(
             n, target_density, proposal_density, proposal_sampler, burnin=1000
         )
-        
-        # Calculate IMCV estimate
-        imcv = imcv_estimator(F, Fapp, X, Y, alpha, eq_f)
-        imcv_estimates.append(imcv)
-
+        imcv_estimates.append(imcv_estimator_plain(F, Fapp, X, Y, alpha, eq_f))
     return np.array(imcv_estimates)
 
-# Target distribution parameters (standard normal)
-mu_target = 0.0
-sigma_target = 1.0
 
-# Define target distribution and sampler
+# ---------------------------------------------------------------------------
+# Theoretical quantities for pi = N(0,1), q = t_nu
+# ---------------------------------------------------------------------------
+def w_star_t(df):
+    """Closed form w* = w_{x=1}, see Section 4.1 of the supplement."""
+    lg = 0.5 * np.log(df / 2.0) + gammaln(df / 2.0) - gammaln((df + 1) / 2.0)
+    return np.exp(lg) * (1.0 + 1.0 / df) ** ((df + 1) / 2.0) * np.exp(-0.5)
+
+
+def kl_t_vs_norm(df):
+    """KL(t_df || N(0,1)) by numerical integration."""
+    f = lambda x: tdist.pdf(x, df) * (tdist.logpdf(x, df) - norm.logpdf(x))
+    val, _ = integrate.quad(f, -np.inf, np.inf, limit=200)
+    return val
+
+
+def v_t(df, N=2_000_000, seed=1):
+    """v = Var_{pi x q}(phi), eq. (1dtv), estimated by Monte Carlo with
+    X ~ pi, Y ~ t_df independent."""
+    rng = np.random.default_rng(seed)
+    x = rng.normal(size=N)
+    y = tdist.rvs(df, size=N, random_state=rng)
+    logw = lambda z: norm.logpdf(z) - tdist.logpdf(z, df)
+    alpha = np.minimum(1.0, np.exp(logw(y) - logw(x)))
+    return np.var((1.0 - alpha) * (x - y))
+
+
+def imcv_var_bound_t(df, sigma_F=1.0):
+    """Upper bound on sigma^2_IMCV, eq. (minbound):
+    min{ (1+2 w*) v ,  v + 2 (w*-1) sigma_F sqrt(v) }."""
+    v = v_t(df)
+    w_star = w_star_t(df)
+    bound_A = (1.0 + 2.0 * w_star) * v
+    bound_B = v + 2.0 * (w_star - 1.0) * sigma_F * np.sqrt(v)
+    return min(bound_A, bound_B), v, bound_A, bound_B
+
+
+# ---------------------------------------------------------------------------
+# Experiment
+# ---------------------------------------------------------------------------
+mu_target, sigma_target = 0.0, 1.0
 target_density = lambda x: norm.pdf(x, loc=mu_target, scale=sigma_target)
-target_sampler = lambda size=None: np.random.normal(loc=mu_target, scale=sigma_target, size=size)
 
-# Define function of interest and its approximation
-F = lambda x: x  # Function to estimate E[X]
-Fapp = lambda x: x  # Approximation function
-eq_f = 0.0  # Expected value of Fapp under target distribution
+F = lambda x: x
+Fapp = lambda x: x
+eq_f = 0.0
+sigma2_F = 1.0
 
-# Simulation parameters
-n = 5000  # Number of samples per estimation
-m = 100   # Number of independent estimations
-
-# Degrees of freedom for Student's t proposal distributions
+n = 5000
+m = 100
 df_values = [4, 8, 16, 32, 64, 128]
 
-# Store results for each degree of freedom
 all_results = []
+vrf_emp = []
+vrf_lower_bound = []
+kl_values = []
+bound_info = []
 
 for df in df_values:
     print(f"Running simulation for Student's t with df = {df}")
-    
-    # Define Student's t proposal distribution
-    mu_proposal = 0.0  # Location parameter
-    scale_proposal = 1.0  # Scale parameter
-    
-    # Update proposal functions for Student's t distribution
-    proposal_density = lambda x: t.pdf(x, df=df, loc=mu_proposal, scale=scale_proposal)
-    proposal_sampler = lambda size=None: t.rvs(df=df, loc=mu_proposal, scale=scale_proposal, size=size)
-    
-    # Run estimation
-    results = estimate(n, m, F, Fapp, eq_f, target_density, proposal_density, proposal_sampler)
+    proposal_density = lambda x, d=df: tdist.pdf(x, df=d, loc=0.0, scale=1.0)
+    proposal_sampler = lambda size=None, d=df: \
+        tdist.rvs(df=d, loc=0.0, scale=1.0, size=size)
+
+    results = estimate(n, m, F, Fapp, eq_f, target_density,
+                       proposal_density, proposal_sampler)
     all_results.append(results)
+    vrf_emp.append(sigma2_F / (n * np.var(results)))
 
-# Create box plot with log scale x-axis
-plt.figure(figsize=(12, 8))
-# Use the actual df_values as positions instead of arange
-positions = df_values
+    bound, v, bA, bB = imcv_var_bound_t(df, sigma_F=np.sqrt(sigma2_F))
+    vrf_lower_bound.append(sigma2_F / bound)
+    bound_info.append((v, bA, bB))
+    kl_values.append(kl_t_vs_norm(df))
 
-# Calculate proportional widths for log scale to make them appear uniform
-# On a log scale, we need to adjust widths to maintain visual consistency
-widths = [ pos / df_values[0] for pos in df_values]
 
-box_plot = plt.boxplot(all_results, labels=[f'{df}' for df in df_values], 
-                       positions=positions, widths=widths, patch_artist=True, showfliers=False)
-
-# Set all boxes to white color
+# ---------------------------------------------------------------------------
+# Panel (c): boxplot of the IMCV estimates
+# ---------------------------------------------------------------------------
+fig, ax = plt.subplots(figsize=(12, 8))
+widths = [pos / df_values[0] for pos in df_values]
+box_plot = ax.boxplot(all_results, positions=df_values, widths=widths,
+                      patch_artist=True, showfliers=False, manage_ticks=False)
 for patch in box_plot['boxes']:
     patch.set_facecolor('white')
-    patch.set_edgecolor('black')  # Keep black edges for visibility
+    patch.set_edgecolor('black')
+ax.axhline(y=0.0, color='red', linestyle='--', label='Theoretical Mean: 0.0')
+ax.set_xscale('log', base=2)
+ax.set_xlim(2, 256)
+ax.set_xticks(df_values)
+ax.set_xticklabels([f'{d}' for d in df_values])
+ax.set_xlabel('Degrees of Freedom', fontsize=24)
+ax.set_ylabel('IMCV Estimates', fontsize=24)
+ax.legend(fontsize=22)
+ax.tick_params(labelsize=22)
+ax.grid(True)
+fig.tight_layout()
+fig.savefig('vrf21.pdf', dpi=300, bbox_inches='tight')
+plt.close(fig)
 
-# Add theoretical mean line
-theoretical_mean = 0.0  # Since F(x) = x and target mean is 0
-plt.axhline(y=theoretical_mean, color='red', linestyle='--', label=f'Theoretical Mean: {theoretical_mean}')
+# ---------------------------------------------------------------------------
+# Panel (d): empirical VRF vs guaranteed VRF
+# ---------------------------------------------------------------------------
+fig, ax = plt.subplots(figsize=(12, 8))
+ax.plot(df_values, vrf_emp, 'b-s', markersize=8,
+        label='Empirical')
+ax.plot(df_values, vrf_lower_bound, 'k-o', markersize=8,
+        label='Bound')
+ax.axhline(y=1.0, color='gray', linestyle=':', linewidth=1.5)
+ax.set_xscale('log', base=2)
+ax.set_yscale('log')
+ax.set_xlim(2, 256)
+ax.set_xticks(df_values)
+ax.set_xticklabels([f'{d}' for d in df_values])
+ax.set_xlabel('Degrees of Freedom', fontsize=24)
+ax.set_ylabel('VRF', fontsize=24)
+ax.legend(fontsize=22)
+ax.tick_params(labelsize=22)
+ax.grid(True)
+fig.tight_layout()
+fig.savefig('vrf22.pdf', dpi=300, bbox_inches='tight')
+plt.close(fig)
 
-# Customize the plot
-plt.xlabel('Degrees of Freedom', fontsize=24)
-plt.ylabel('IMCV Estimates', fontsize=24)
-plt.legend(fontsize=22)
-plt.xticks(fontsize=22)
-plt.yticks(fontsize=22)
-plt.grid(True)
-
-# Set x-axis to log base 2 scale
-plt.xscale('log', base=2)
-
-# Adjust the x-axis limits to ensure consistent box widths
-plt.xlim(2, 256)  # Cover the range from 2^1 to 2^8
-
-plt.tight_layout()
-plt.savefig('vrf21.pdf', dpi=300, bbox_inches='tight')
-plt.close()
+for d, k, lb, e, (v, bA, bB) in zip(df_values, kl_values, vrf_lower_bound,
+                                    vrf_emp, bound_info):
+    which = 'B' if bB < bA else 'A'
+    print(f"df={d}: KL={k:.5f}  w*={w_star_t(d):.4f}  v={v:.5f}  "
+          f"boundA={bA:.4f}  boundB={bB:.4f}  (min: {which})  "
+          f"guaranteed VRF={lb:.3f}  empirical VRF={e:.3f}")

@@ -136,7 +136,7 @@ def estimate(
 mu_target = 0.0
 sigma_target = 1.0
 
-mu_proposal = 0.1
+mu_proposal = 0.5
 sigma_proposal = 1.01
 
 # Define densities and samplers
@@ -161,7 +161,7 @@ eq_f = norm.cdf((kappa * mu_proposal) / np.sqrt(1 + kappa ** 2 * sigma_proposal 
 
 # Estimation parameters
 M = 100
-N_values = [50,100,200,500,1000,2000,3000,4000,5000]
+N_values = [1000,2000,3000,4000,5000,6000,7000,8000,9000,10000,11000,12000,13000,14000,15000,16000,17000,18000,19000,20000]
 # N_values = [5000]
 avg_mse_imcv = []
 avg_mse_snis = []

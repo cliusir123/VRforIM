@@ -138,7 +138,7 @@ class Basic_settings():
         self.adp_L = optax.apply_updates(self.adp_L, updates)
 
         self.adp_L = jax.numpy.tril(self.adp_L, k = 0)
-        bounded_diag = jnp.clip(jnp.diag(self.adp_L), a_min=0.001, a_max=1000.)
+        bounded_diag = jnp.clip(jnp.diag(self.adp_L), 0.001, 1000.)
         self.adp_L = self.adp_L - jnp.diag(jnp.diag(self.adp_L)) + jnp.diag(bounded_diag)
 
         if self.proposal_str == 'student_t': 
