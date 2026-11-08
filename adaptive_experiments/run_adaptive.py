@@ -14,8 +14,6 @@ from ADPIMH import BAIM, IndMH, adp_only
 from ADPestimators import EXP_Est, First_Est, Odd_ratio, Second_Est
 from Distributions import Bayesian_Logistic_Regression, GP_Regression
 
-DEFAULT_COV_SCALE = {'heart': 1.1, 'boston': 1.1, 'pendulum': 1.1}
-
 ESTIMATORS = {
     'after': [('IMCV', 'IMCV'), ('IMCV(c1,c2)', 'IMCV_coef'), ('RB', 'IMCV_poisson'), ('CIM(c)', 'IMCV_static')],
     'during': [('IMCV', 'BatchIMCV'), ('IMCV(c1,c2)', 'Batch_coef'), ('RB', 'BatchIMCV_poisson'),
@@ -86,9 +84,8 @@ def main():
     p.add_argument('--n-batches', type=int, default=20, help="l (mode during)")
     p.add_argument('--burnin-batches', type=int, default=20, help="adaptive batches discarded (mode during)")
     p.add_argument('--lr', type=float, default=1e-5, help="learning rate of Algorithm 2 (mode during)")
-    p.add_argument('--cov-scale', type=float, default=None,
-                   help="IM proposal covariance = cov_scale x adapted covariance (1 = no inflation); "
-                        "default 1.1 for heart, boston, pendulum and 1.0 otherwise")
+    p.add_argument('--cov-scale', type=float, default=1.0,
+                   help="IM proposal covariance = cov_scale x adapted covariance (1 = no inflation)")
     p.add_argument('--proposal-from', default=None,
                    help="reuse the adapted proposal (mu_q, L_q) saved in an earlier .npz; skips the burn-in adaptation")
     p.add_argument('--out', default=None, help="where to save the estimates (.npz)")
@@ -96,8 +93,6 @@ def main():
 
     if args.model in ('logistic', 'gp') and args.dataset is None:
         p.error("--dataset is required for logistic and gp")
-    if args.cov_scale is None:
-        args.cov_scale = DEFAULT_COV_SCALE.get(args.dataset, 1.0)
 
     target_str, model, d, mu_t, L_t, mu_q, L_q, functions, scalar = build_problem(args)
     name = args.dataset or f"gaussian{d}"

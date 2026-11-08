@@ -40,13 +40,7 @@
     },
     "reps": 50,
     "seed": 10,
-    "cov_scale": {
-      "heart": 1.1,
-      "boston": 1.1,
-      "pendulum": 1.1,
-      "pima": 1.0,
-      "note": "run_adaptive.py default; Ripley and German rows are published values"
-    },
+    "cov_scale": 1.0,
     "proposal": "checkpoints/<dataset>.npz",
     "reproduce": "DATASETS=\"pima heart boston pendulum\" ./run_all.sh"
   },

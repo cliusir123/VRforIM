@@ -61,8 +61,8 @@ the random seed while the IMCV estimate stays close to the numerical integration
   processes on GPU); `DATASETS="pima heart" ./run_all.sh` restricts the data sets. Each run
   writes `results/runs/<table>_<dataset>_<setting>.log`, ending with its VRF table and the
   estimated coefficients, and the estimates in the matching `.npz`.
-- The IM proposal covariance is the adapted one multiplied by 1.1 for Boston and
-  Pendulum and left unchanged for the other data sets (`--cov-scale` overrides it).
+- The IM proposal is the adapted Gaussian; `--cov-scale c` optionally multiplies its
+  covariance by c (default 1, used for all tables).
 - `results/tables.md` and `results/tables.tex` contain the tables as reported, and
   `results/hyperparams.json` the settings of the runs behind them.
 
