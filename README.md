@@ -56,13 +56,12 @@ the random seed while the IMCV estimate stays close to the numerical integration
 
   and prints the VRFs against the IM estimator. `python run_adaptive.py -h` lists all options.
 - `checkpoints/<dataset>.npz` store the adapted proposals; `run_all.sh` reuses them, so a run
-  skips the burn-in adaptation (delete a checkpoint to retrain it: 5 million iterations,
-  a few minutes for logistic regression, about 30 minutes per Gaussian process data set on a GPU).
+  skips the burn-in adaptation.
 - `./run_all.sh` runs all the table settings in parallel (logistic regression on CPU, Gaussian
   processes on GPU); `DATASETS="pima heart" ./run_all.sh` restricts the data sets. Each run
   writes `results/runs/<table>_<dataset>_<setting>.log`, ending with its VRF table and the
   estimated coefficients, and the estimates in the matching `.npz`.
-- The IM proposal covariance is the adapted one multiplied by 1.1 for Heart, Boston and
+- The IM proposal covariance is the adapted one multiplied by 1.1 for Boston and
   Pendulum and left unchanged for the other data sets (`--cov-scale` overrides it).
 - `results/tables.md` and `results/tables.tex` contain the tables as reported, and
   `results/hyperparams.json` the settings of the runs behind them.

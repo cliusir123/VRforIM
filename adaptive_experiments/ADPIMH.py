@@ -3,6 +3,7 @@ import jax.numpy as jnp
 import numpy as np
 import numpy.random as nr
 import optax
+from tqdm import tqdm
 
 from Distributions import multivariate_normal
 
@@ -176,7 +177,7 @@ class BAIM(Basic_settings):
         self.init_state()
         self.optimization_init()
         B = self.batch_size
-        for b in range(self.n_batch):
+        for b in tqdm(range(self.n_batch), desc="adaptive IM batches", leave=False):
             means[b], covs[b] = self.proposal_params()
             proposals, epsilon = self.IMHsampling(B)
             proposals = np.asarray(proposals)
@@ -202,9 +203,7 @@ class adp_only(Basic_settings):
         loss = np.zeros(self.n_batch)
         self.init_state()
         self.optimization_init()
-        for b in range(self.n_batch):
-            if verbose and (b + 1) % max(1, self.n_batch // 10) == 0:
-                print(f'{b + 1}/{self.n_batch} batches adapted', flush=True)
+        for b in tqdm(range(self.n_batch), desc="burn-in adaptation", disable=None if verbose else True, mininterval=5):
             _, epsilon = self.IMHsampling(self.batch_size)
             self.optimization_collect(epsilon)
             loss[b] = self.cum_obj

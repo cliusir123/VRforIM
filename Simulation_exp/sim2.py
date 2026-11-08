@@ -5,6 +5,7 @@ import numpy as np
 from scipy.stats import norm, t as tdist
 from scipy.special import gammaln
 from scipy import integrate
+from tqdm import tqdm
 
 
 def independent_metropolis(n, target_density, proposal_density, proposal_sampler,
@@ -44,7 +45,7 @@ def imcv_estimator_plain(F, Fapprox, X, Y, alpha, eq_f):
 def estimate(n, m, F, Fapp, eq_f, target_density, proposal_density,
              proposal_sampler):
     imcv_estimates = []
-    for _ in range(m):
+    for _ in tqdm(range(m), desc="replications", leave=False):
         X, Y, alpha = independent_metropolis(
             n, target_density, proposal_density, proposal_sampler, burnin=1000
         )
@@ -98,8 +99,7 @@ vrf_lower_bound = []
 kl_values = []
 bound_info = []
 
-for df in df_values:
-    print(f"Running simulation for Student's t with df = {df}")
+for df in tqdm(df_values, desc="df"):
     proposal_density = lambda x, d=df: tdist.pdf(x, df=d, loc=0.0, scale=1.0)
     proposal_sampler = lambda size=None, d=df: \
         tdist.rvs(df=d, loc=0.0, scale=1.0, size=size)

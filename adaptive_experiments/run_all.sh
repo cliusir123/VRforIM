@@ -3,6 +3,7 @@ set -u
 cd "$(dirname "$0")"
 mkdir -p results/runs
 export XLA_PYTHON_CLIENT_PREALLOCATE=false
+export TQDM_DISABLE=1
 DATASETS=${DATASETS:-"ripley pima heart german boston pendulum"}
 SCALE=()
 [ -n "${COV_SCALE:-}" ] && SCALE=(--cov-scale "$COV_SCALE")

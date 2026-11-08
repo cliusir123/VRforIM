@@ -4,6 +4,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 from scipy.stats import norm
 from scipy import integrate
+from tqdm import tqdm
 
 
 def independent_metropolis(n, target_density, proposal_density, proposal_sampler,
@@ -43,7 +44,7 @@ def imcv_estimator_plain(F, Fapprox, X, Y, alpha, eq_f):
 def estimate(n, m, F, Fapp, eq_f, target_density, proposal_density,
              proposal_sampler):
     imcv_estimates = []
-    for _ in range(m):
+    for _ in tqdm(range(m), desc="replications", leave=False):
         X, Y, alpha = independent_metropolis(
             n, target_density, proposal_density, proposal_sampler, burnin=1000
         )
@@ -113,8 +114,7 @@ vrf_emp = []
 vrf_lower_bound = []
 bound_info = []
 
-for sigma_proposal in sigma_proposal_values:
-    print(f"Running simulation for sigma_proposal = {sigma_proposal}")
+for sigma_proposal in tqdm(sigma_proposal_values, desc="sigma"):
     proposal_density = lambda x, s=sigma_proposal: norm.pdf(x, loc=0.0, scale=s)
     proposal_sampler = lambda size=None, s=sigma_proposal: \
         np.random.normal(0.0, s, size=size)

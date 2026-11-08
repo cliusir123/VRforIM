@@ -3,6 +3,7 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import numpy as np
 from scipy.stats import norm
+from tqdm import tqdm
 
 def independent_metropolis(n, target_density, proposal_density, proposal_sampler, burnin=100):
     total_n = n + burnin
@@ -71,7 +72,7 @@ def estimate(
     im_estimates = []
     is_estimates = []
 
-    for _ in range(m):
+    for _ in tqdm(range(m), desc=f"N={n}", leave=False):
         X, Y, alpha = independent_metropolis(
             n, target_density, proposal_density, proposal_sampler
         )
@@ -140,7 +141,7 @@ avg_mse_snis = []
 avg_mse_im = []
 avg_mse_is = []
 
-for N in N_values:
+for N in tqdm(N_values, desc="N"):
     bias_imcv_list, bias_snis_list, bias_im_list, bias_is_list = estimate(
         n=N, m=M,
         mean_true=mean_true, F=F, Fapp=Fapp, eq_f=eq_f,

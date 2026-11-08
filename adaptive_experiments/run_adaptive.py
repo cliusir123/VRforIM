@@ -6,6 +6,7 @@ import sys
 import time
 
 import numpy as np
+from tqdm import tqdm
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -125,7 +126,7 @@ def main():
     results = {f: np.zeros((len(labels), args.reps, 1 if f in scalar else d)) for f in functions}
     coefs = {f: {lab: [] for lab, _ in est_list} for f in functions}
     acc = np.zeros(args.reps)
-    for rep in range(args.reps):
+    for rep in tqdm(range(args.reps), desc="replications"):
         t0 = time.time()
         run, n, B = run_replication(args, rep, target_str, model, d, mu_t, L_t, mu_q, L_q)
         acc[rep] = run['accepted'][-n:].mean()
@@ -141,7 +142,7 @@ def main():
                         coefs[fname][lab].append(out[1:])
                     else:
                         results[fname][k, rep, j] = out
-        print(f"replication {rep + 1}/{args.reps}  acceptance {acc[rep]:.3f}  ({time.time() - t0:.0f}s)")
+        tqdm.write(f"replication {rep + 1}/{args.reps}  acceptance {acc[rep]:.3f}  ({time.time() - t0:.0f}s)")
 
     print(f"\n{name}  AP: {acc.mean():.2f}")
     print(f"{'F':<16}" + ''.join(f"{lab:>18}" for lab in labels[1:]))

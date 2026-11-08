@@ -4,6 +4,7 @@ import sys
 
 import numpy as np
 import numpy.random as nr
+from tqdm import tqdm
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
@@ -26,7 +27,7 @@ def fit_proposal(inputs, output, cov0, restarts, criterion):
     log_prior = log_prior_of_S(S_check, dim)
 
     best = None
-    for _ in range(restarts):
+    for _ in tqdm(range(restarts), desc="EM restarts", leave=False):
         pro = mix_normal(dim)
         w, g = pro.em_algorithm(prior.sampler(1000), N_COMPS, inputs, 3001)
         pro.set_parameters(w, g, cov0, inputs)
@@ -47,13 +48,13 @@ def main():
     os.makedirs(PROPOSAL_DIR, exist_ok=True)
 
     inputs0, output = read_data()
-    for cols in MODELS:
+    for cols in tqdm(MODELS, desc="models"):
         label = model_label(cols)
         inputs = inputs0[:, cols]
         cov0 = np.linalg.inv(inputs.T @ inputs)
         score, w, g = fit_proposal(inputs, output, cov0, args.restarts, args.criterion)
         np.save(os.path.join(PROPOSAL_DIR, f"x{label}.npy"), [w, g])
-        print(f"X{label:<5} score {score:8.3f}   weights {np.round(w, 3)}   g {np.round(g, 3)}", flush=True)
+        tqdm.write(f"X{label:<5} score {score:8.3f}   weights {np.round(w, 3)}   g {np.round(g, 3)}")
     print(f"proposals saved in {PROPOSAL_DIR}")
 
 
