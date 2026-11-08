@@ -21,14 +21,12 @@ class multivariate_normal(DisBase):
     def __init__(self, dim: int = 100, value: int = 10) -> None:
         super().__init__(dim, value)
 
-    def sampler(self, *args): #args: 0 loc 1 scale 2 number , 3 beta
+    def sampler(self, *args):
         epsilon = jax.random.normal(next(self.rng_seq), shape = [self.dim, args[2]])
         x = args[1] @ epsilon + args[0].reshape((self.dim,1))
         return x.T, epsilon.T
 
-    def logpdf(self, *args): #args: 0 data 1 loc 2 scale
+    def logpdf(self, *args):
         v = jax.lax.linalg.triangular_solve(args[2], args[0] - args[1], left_side=True, lower=True)
         logp = - 0.5 * jnp.sum(v * v)
         return logp
-
-

@@ -55,7 +55,3 @@ class First_Est(Estimator):
     
     def analytics(self, data):
         return data[:, self.pos]
-
-
-
-    

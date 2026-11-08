@@ -10,11 +10,11 @@ from distributions import multivariate_normal
 class Basic_settings():
     def __init__(
         self,
-        target_str: str = 'multivariate_normal',      #target distribution
-        proposal_str: str = 'multivariate_normal',     #proposal distribution
-        itrnum: int = 10000,                #number of MH steps
-        dim : int = 16,                  #dimensions
-        learning_rate: float = 0.001,            #learning rate
+        target_str: str = 'multivariate_normal',
+        proposal_str: str = 'multivariate_normal',
+        itrnum: int = 10000,
+        dim : int = 16,
+        learning_rate: float = 0.001,
         value : int = 10
         ) -> None:
         self.target_str = target_str
@@ -31,12 +31,8 @@ class Basic_settings():
 
             
         self.logtarget = jax.jit(self.target.logpdf)
-        # self.logtarget = self.target.logpdf
         self.logproposal = jax.jit(self.proposal.logpdf)
     
-    # t_mean: mean value of target ; t_L: scale of target
-    # p_mean: mean value of proposal ; p_L: scale of proposal
-    # adp_L: scale of distribution used for adaptation. adp_mean = p_mean due to moment matching
     def set_distribution_parameters(self, *args) -> None:
         self.t_mean = args[0]
         self.t_L = args[1]
@@ -86,8 +82,6 @@ class Basic_settings():
     
 
     def optimization_init(self):
-        # The optimizer steps once per batch update, so tie the cosine schedule
-        # to the number of batches rather than the raw MH iteration count.
         decay_steps = max(1, getattr(self, "n_batch", self.itrnum))
         schedule_m = optax.cosine_decay_schedule(init_value=self.lr_m, decay_steps=decay_steps)
         schedule_l = optax.cosine_decay_schedule(init_value=self.lr_l, decay_steps=decay_steps)
@@ -102,9 +96,6 @@ class Basic_settings():
         self.cur_grad = self.obj_grad(adp_sample)
         self.grad_val += self.cur_grad / self.batch_size
         self.grad_L += (self.cur_grad.reshape((self.dim,1)) @ epsilon.reshape((1,self.dim)) + jnp.diag(1 / jnp.diag(self.adp_L))) / self.batch_size
-        # v = jax.lax.linalg.triangular_solve(self.adp_L, adp_sample - self.p_mean, left_side=True, lower=True)
-        # u = jax.lax.linalg.triangular_solve(self.adp_L.T, v, left_side=True, lower=True)
-        # self.grad_L += (self.cur_grad.reshape((self.dim,1)) + u.reshape((self.dim,1))) @ epsilon.reshape((1,self.dim)) / self.batch_size
         self.cum_obj += (self.objective_function(adp_sample) + jnp.sum(jnp.log(jnp.diag(self.adp_L)))) / self.batch_size
         
     
@@ -134,20 +125,17 @@ class IndMH(Basic_settings):
         super().__init__(target_str, proposal_str, itrnum, dim,learning_rate, value)
     
     def IMH(self) -> Tuple[np.ndarray,...]:
-       #initialize arrays
         t_sample = np.zeros((self.itrnum, self.dim))
         acceptance_rate = np.zeros(self.itrnum)
         pmeans = np.zeros((self.itrnum, self.dim))
 
         self.init_state()
-        #IMH iterations
         p_sample , _= self.IMHsampling(self.itrnum, False)
         for i in range(self.itrnum):
 
             t_sample[i] = self.current.reshape((self.dim,))
 
             a = self.IMHstep(p_sample[i])          
-            #update
             
             acceptance_rate[i] = np.reshape(a,())
             pmeans[i] = jnp.reshape(self.p_mean, (self.dim,))
@@ -189,4 +177,3 @@ class adp_only(Basic_settings):
                 self.grad_L = 0
                 self.cum_obj = 0
         return loss
-    

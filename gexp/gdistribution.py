@@ -1,121 +1,91 @@
-import jax.numpy as jnp
-import jax
-import jax.scipy.stats as jss
-from scipy.stats import norm
 import numpy as np
 import numpy.random as nr
+from scipy.special import logsumexp
 
 
-class gprior():
-    def __init__(self,dim) -> None:
-        self.dim = dim
-    
-    def set_parameters(self, cov0, input, g):
-        self.cov0 = cov0
-        self.input = input
-        self.g = g
-    
-    def sampler(self, num):
-        samples = []
-        for i in range(num):
-            cov = self.cov0 * self.g[i]
-            beta = nr.multivariate_normal(np.zeros(self.dim), cov)
-            samples.append(beta)
-        return np.array(samples)
+def sample_g(size):
+    w = nr.beta(1, 1, size)
+    return w / (1 - w)
 
-    def logpdf(self, x):
-        n = 1000
-        w = nr.beta(1,1,n)
-        g = w/(1-w)
-        self.g = g
-        v = self.input @ x.T
-        S = v.T @ v
-        logl = - 0.5 * (self.dim * jnp.log(self.g) + S / self.g)
-        # logl = jnp.mean(logl)
-        logl = jax.scipy.special.logsumexp(logl)
-        return logl
 
-class mix_normal():
+class _GaussianScaleMixture:
     def __init__(self, dim) -> None:
         self.dim = dim
-        
-    
-    def set_parameters(self, n_comps, weights, gs, covs, input):
-        self.n_comps = n_comps
-        self.weights = weights
-        self.gs = gs
-        self.input  = input
-        self.covs = covs
-    
+
+    def _set_design(self, cov0, inputs):
+        self.cov0 = cov0
+        self.inputs = inputs
+        self.chol0 = np.linalg.cholesky(cov0)
+
+    def quad(self, B):
+        v = np.atleast_2d(B) @ self.inputs.T
+        return np.sum(v * v, axis=1)
+
+
+class gprior(_GaussianScaleMixture):
+
+    def set_parameters(self, cov0, inputs, L=1000):
+        self._set_design(cov0, inputs)
+        self.L = L
+        self.new_chain()
+
+    def new_chain(self):
+        self.G = sample_g(self.L)
+
     def sampler(self, num):
-        samples = []
-        for i in range(num):
-            z = nr.choice(np.arange(self.n_comps), p = self.weights)
-            beta = nr.multivariate_normal(np.zeros(self.dim), self.covs[z])
-            samples.append(beta)
-        return np.array(samples)
-    
-    def logpdf(self, x):
-        v = self.input @ x.T
-        S = v.T @ v
-        loglik = jnp.log(self.weights) - 0.5 * (self.dim * jnp.log(self.gs) + S / self.gs)
-        loglik = jax.scipy.special.logsumexp(loglik)
-        return loglik
+        g = sample_g(num)
+        z = nr.standard_normal((num, self.dim))
+        return np.sqrt(g)[:, None] * (z @ self.chol0.T)
 
-    def em_algorithm(self, data, n_comps, input, max_itr = 1000):
-        dim = self.dim
-        n = data.shape[0]
+    def log_density(self, B):
+        S = self.quad(B)
+        log_g = np.log(self.G)
+        rows = max(1, 2_000_000 // self.L)
+        out = np.empty(len(S))
+        for s in range(0, len(S), rows):
+            out[s:s + rows] = logsumexp(-0.5 * (self.dim * log_g + S[s:s + rows, None] / self.G), axis=1)
+        return out - np.log(self.L)
+
+
+def log_prior_of_S(S, dim, n_grid=6000):
+    t = np.linspace(np.log(1e-7), np.log(1e9), n_grid)
+    g = np.exp(t)
+    S = np.atleast_1d(S)
+    return logsumexp(-0.5 * (dim * np.log(g) + S[:, None] / g) - 2 * np.log1p(g) + t, axis=1) + np.log(t[1] - t[0])
+
+
+class mix_normal(_GaussianScaleMixture):
+
+    def set_parameters(self, weights, gs, cov0, inputs):
+        self._set_design(cov0, inputs)
+        self.weights = np.asarray(weights)
+        self.gs = np.asarray(gs)
+        self.n_comps = len(self.weights)
+
+    def sampler(self, num):
+        z = nr.choice(self.n_comps, size=num, p=self.weights)
+        eps = nr.standard_normal((num, self.dim))
+        return np.sqrt(self.gs[z])[:, None] * (eps @ self.chol0.T)
+
+    def logpdf(self, B):
+        return self.logpdf_of_S(self.quad(B))
+
+    def logpdf_of_S(self, S):
+        S = np.atleast_1d(S)
+        return logsumexp(np.log(self.weights) - 0.5 * (self.dim * np.log(self.gs) + S[:, None] / self.gs), axis=1)
+
+    def em_algorithm(self, data, n_comps, inputs, max_itr=1000):
+        self.inputs = inputs
+        S = self.quad(data)
         weights = np.ones(n_comps) / n_comps
-        w = nr.beta(1,1,n_comps)
-        gs = w/(1-w)
-        ddet = np.linalg.det(np.linalg.inv(input.T @ input))
-        quad = np.array([data[i].T @ (input.T @ input) @ data[i] for i in range(n)])
-        for itr in range(max_itr):
-            if (itr+1) % 1000 == 0:
-                print(itr+1, weights, gs)
-            # E-step
-            loglik = np.zeros((n, n_comps))
-            for i in range(n_comps):
-                for j in range(n):
-                    llk = np.log(weights[i]) - 0.5 * (dim * np.log(2*np.pi*gs[i]) + np.log(ddet)+ quad[j] /gs[i])
-                    loglik[j,i] = np.exp(llk)
-                    if loglik[j, i] < 1e-10:
-                        loglik[j, i] = 1e-10
-            loglik = loglik / np.sum(loglik, axis = 1)[:, None]
-            # M-step
-            weights = np.sum(loglik, axis = 0) / n
-            for i in range(n_comps):
-                for j in range(n):
-                    gs[i] += loglik[j, i] * quad[j]
-                gs[i] = gs[i] / (np.sum(loglik[:, i]) * self.dim)
+        gs = sample_g(n_comps)
+        for _ in range(max_itr):
+            logr = np.log(weights) - 0.5 * (self.dim * np.log(gs) + S[:, None] / gs)
+            r = np.exp(logr - logsumexp(logr, axis=1, keepdims=True))
+            nk = np.maximum(r.sum(axis=0), 1e-12)
+            weights = nk / len(S)
+            gs = (r * S[:, None]).sum(axis=0) / (self.dim * nk)
         self.n_comps = n_comps
         self.weights = weights
         self.gs = gs
         return weights, gs
-    
-    def em_algorithm_1d(self, data, n_comps, max_itr = 1000):
-        n = data.shape[0]
-        weights = np.ones(n_comps) / n_comps
-        w = nr.beta(1,1,n_comps)
-        gs = w/(1-w)
-        stds = np.sqrt(gs)
-        for itr in range(max_itr):
-            if (itr+1) % 1000 == 0:
-                print(itr+1, weights, gs)
-            # E-step
-            wei = np.zeros((n_comps, n))
-            for k in range(n_comps):
-                wei[k] = np.log(weights[k]) - 0.5 * np.log(gs[k]) - 0.5 * (data**2 / gs[k])
-            wei = np.exp(wei)
-            
-            print(wei)
-            weights_sum = np.sum(wei, axis=0)
-            print(weights_sum)
-            responsibilities = wei / weights_sum
-            weights = np.mean(responsibilities, axis=1)
-            stds = np.array([np.sqrt(np.sum(responsibilities[k] * data**2) / np.sum(responsibilities[k])) for k in range(n_comps)])
-        self.n_comps = n_comps
-        self.weights = weights
-        self.gs = stds**2
-        return weights, gs
-

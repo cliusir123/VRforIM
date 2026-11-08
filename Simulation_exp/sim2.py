@@ -7,9 +7,6 @@ from scipy.special import gammaln
 from scipy import integrate
 
 
-# ---------------------------------------------------------------------------
-# Sampler
-# ---------------------------------------------------------------------------
 def independent_metropolis(n, target_density, proposal_density, proposal_sampler,
                            burnin=100):
     total_n = n + burnin
@@ -36,9 +33,6 @@ def independent_metropolis(n, target_density, proposal_density, proposal_sampler
     return np.array(X_samples[-n-1:-1]), Y_proposals[-n:], np.array(alphas[-n:])
 
 
-# ---------------------------------------------------------------------------
-# Estimator: plain IMCV, c1 = c2 = 1 (the estimator covered by Theorem 2.3)
-# ---------------------------------------------------------------------------
 def imcv_estimator_plain(F, Fapprox, X, Y, alpha, eq_f):
     fX = F(X)
     fY = F(Y)
@@ -58,25 +52,18 @@ def estimate(n, m, F, Fapp, eq_f, target_density, proposal_density,
     return np.array(imcv_estimates)
 
 
-# ---------------------------------------------------------------------------
-# Theoretical quantities for pi = N(0,1), q = t_nu
-# ---------------------------------------------------------------------------
 def w_star_t(df):
-    """Closed form w* = w_{x=1}, see Section 4.1 of the supplement."""
     lg = 0.5 * np.log(df / 2.0) + gammaln(df / 2.0) - gammaln((df + 1) / 2.0)
     return np.exp(lg) * (1.0 + 1.0 / df) ** ((df + 1) / 2.0) * np.exp(-0.5)
 
 
 def kl_t_vs_norm(df):
-    """KL(t_df || N(0,1)) by numerical integration."""
     f = lambda x: tdist.pdf(x, df) * (tdist.logpdf(x, df) - norm.logpdf(x))
     val, _ = integrate.quad(f, -np.inf, np.inf, limit=200)
     return val
 
 
 def v_t(df, N=2_000_000, seed=1):
-    """v = Var_{pi x q}(phi), eq. (1dtv), estimated by Monte Carlo with
-    X ~ pi, Y ~ t_df independent."""
     rng = np.random.default_rng(seed)
     x = rng.normal(size=N)
     y = tdist.rvs(df, size=N, random_state=rng)
@@ -86,8 +73,6 @@ def v_t(df, N=2_000_000, seed=1):
 
 
 def imcv_var_bound_t(df, sigma_F=1.0):
-    """Upper bound on sigma^2_IMCV, eq. (minbound):
-    min{ (1+2 w*) v ,  v + 2 (w*-1) sigma_F sqrt(v) }."""
     v = v_t(df)
     w_star = w_star_t(df)
     bound_A = (1.0 + 2.0 * w_star) * v
@@ -95,9 +80,6 @@ def imcv_var_bound_t(df, sigma_F=1.0):
     return min(bound_A, bound_B), v, bound_A, bound_B
 
 
-# ---------------------------------------------------------------------------
-# Experiment
-# ---------------------------------------------------------------------------
 mu_target, sigma_target = 0.0, 1.0
 target_density = lambda x: norm.pdf(x, loc=mu_target, scale=sigma_target)
 
@@ -133,9 +115,6 @@ for df in df_values:
     kl_values.append(kl_t_vs_norm(df))
 
 
-# ---------------------------------------------------------------------------
-# Panel (c): boxplot of the IMCV estimates
-# ---------------------------------------------------------------------------
 fig, ax = plt.subplots(figsize=(12, 8))
 widths = [pos / df_values[0] for pos in df_values]
 box_plot = ax.boxplot(all_results, positions=df_values, widths=widths,
@@ -157,9 +136,6 @@ fig.tight_layout()
 fig.savefig('vrf21.pdf', dpi=300, bbox_inches='tight')
 plt.close(fig)
 
-# ---------------------------------------------------------------------------
-# Panel (d): empirical VRF vs guaranteed VRF
-# ---------------------------------------------------------------------------
 fig, ax = plt.subplots(figsize=(12, 8))
 ax.plot(df_values, vrf_emp, 'b-s', markersize=8,
         label='Empirical')

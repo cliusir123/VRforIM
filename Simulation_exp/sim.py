@@ -6,9 +6,6 @@ from scipy.stats import norm
 from scipy import integrate
 
 
-# ---------------------------------------------------------------------------
-# Sampler
-# ---------------------------------------------------------------------------
 def independent_metropolis(n, target_density, proposal_density, proposal_sampler,
                            burnin=100):
     total_n = n + burnin
@@ -35,9 +32,6 @@ def independent_metropolis(n, target_density, proposal_density, proposal_sampler
     return np.array(X_samples[-n-1:-1]), Y_proposals[-n:], np.array(alphas[-n:])
 
 
-# ---------------------------------------------------------------------------
-# Estimator: plain IMCV, c1 = c2 = 1 (the estimator covered by Theorem 2.3)
-# ---------------------------------------------------------------------------
 def imcv_estimator_plain(F, Fapprox, X, Y, alpha, eq_f):
     fX = F(X)
     fY = F(Y)
@@ -57,14 +51,7 @@ def estimate(n, m, F, Fapp, eq_f, target_density, proposal_density,
     return np.array(imcv_estimates)
 
 
-# ---------------------------------------------------------------------------
-# Theoretical quantities for pi = N(0,1), q = N(0, sigma^2), sigma > 1
-# ---------------------------------------------------------------------------
 def v_gaussian(sigma):
-    """v = Var_{pi x q}(phi), eq. (1dnormalv):
-    v = (1/(pi*sigma)) int_0^inf int_{-y}^{y}
-        (exp{-0.5(1-1/sigma^2)(y^2-x^2)}-1)^2 (y-x)^2
-        exp{-x^2/2 - y^2/(2 sigma^2)} dx dy."""
     a = 1.0 - 1.0 / sigma**2
 
     def inner(y):
@@ -79,8 +66,6 @@ def v_gaussian(sigma):
 
 
 def imcv_var_bound(sigma, sigma_F=1.0):
-    """Upper bound on sigma^2_IMCV, eq. (minbound):
-    min{ (1+2 w*) v ,  v + 2 (w*-1) sigma_F sqrt(v) },  with w* = sigma."""
     v = v_gaussian(sigma)
     w_star = sigma
     bound_A = (1.0 + 2.0 * w_star) * v
@@ -89,13 +74,11 @@ def imcv_var_bound(sigma, sigma_F=1.0):
 
 
 def kl_of_sigma(s):
-    """KL(q || pi) for q = N(0, s^2), pi = N(0, 1)."""
     s = np.asarray(s, dtype=float)
     return 0.5 * (s**2 - 1.0 - 2.0 * np.log(s))
 
 
 def sigma_of_kl(k):
-    """Inverse of kl_of_sigma on s >= 1, by bisection."""
     k = np.atleast_1d(np.asarray(k, dtype=float))
     out = np.ones_like(k)
     for i, ki in enumerate(k):
@@ -113,16 +96,13 @@ def sigma_of_kl(k):
     return out
 
 
-# ---------------------------------------------------------------------------
-# Experiment
-# ---------------------------------------------------------------------------
 mu_target, sigma_target = 0.0, 1.0
 target_density = lambda x: norm.pdf(x, loc=mu_target, scale=sigma_target)
 
 F = lambda x: x
 Fapp = lambda x: x
 eq_f = 0.0
-sigma2_F = 1.0            # Var_pi(F) for F(x) = x, pi = N(0,1)
+sigma2_F = 1.0
 
 n = 5000
 m = 100
@@ -150,9 +130,6 @@ for sigma_proposal in sigma_proposal_values:
 
 kl_values = kl_of_sigma(np.array(sigma_proposal_values))
 
-# ---------------------------------------------------------------------------
-# Panel (a): boxplot of the IMCV estimates, with KL axis on top
-# ---------------------------------------------------------------------------
 fig, ax = plt.subplots(figsize=(12, 8))
 box_plot = ax.boxplot(all_results, positions=sigma_proposal_values,
                       widths=0.04, patch_artist=True, showfliers=False,
@@ -174,9 +151,6 @@ fig.tight_layout()
 fig.savefig('vrf11.pdf', dpi=300, bbox_inches='tight')
 plt.close(fig)
 
-# ---------------------------------------------------------------------------
-# Panel (b): empirical VRF vs guaranteed VRF, with KL axis on top
-# ---------------------------------------------------------------------------
 fig, ax = plt.subplots(figsize=(12, 8))
 ax.plot(sigma_proposal_values, vrf_emp, 'b-s', markersize=8,
         label='Empirical')

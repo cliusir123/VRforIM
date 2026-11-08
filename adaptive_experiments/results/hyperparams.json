@@ -1,0 +1,70 @@
+{
+  "tables": "results/tables.md and results/tables.tex (static files): Pima and Heart rows of Tables 3-4 and all of Table 5 are new results; all other entries are the published values",
+  "new_results": {
+    "datasets": [
+      "pima",
+      "heart",
+      "boston",
+      "pendulum"
+    ],
+    "runs": {
+      "table3": {
+        "mode": "after",
+        "n": 5000,
+        "burnin": 100
+      },
+      "table4": [
+        {
+          "mode": "during",
+          "batch_size": 50,
+          "n_batches": 20,
+          "burnin_batches": 20,
+          "lr": 1e-05
+        },
+        {
+          "mode": "during",
+          "batch_size": 500,
+          "n_batches": 200,
+          "burnin_batches": 20,
+          "lr": 1e-05
+        }
+      ],
+      "table5": {
+        "model": "gp",
+        "mode": "during",
+        "batch_size": 50,
+        "n_batches": 20,
+        "burnin_batches": 20,
+        "lr": 1e-05
+      }
+    },
+    "reps": 50,
+    "seed": 10,
+    "cov_scale": {
+      "heart": 1.1,
+      "boston": 1.1,
+      "pendulum": 1.1,
+      "pima": 1.0,
+      "note": "run_adaptive.py default; Ripley and German rows are published values"
+    },
+    "proposal": "checkpoints/<dataset>.npz",
+    "reproduce": "DATASETS=\"pima heart boston pendulum\" ./run_all.sh"
+  },
+  "checkpoints": {
+    "adapt_iters": 5000000,
+    "adapt_batch": 100,
+    "adapt_lr (L)": 0.01,
+    "lr (mean)": 0.1,
+    "schedule": "cosine",
+    "gradient": "DSVI + Adam",
+    "seed": 10,
+    "initial_proposal": {
+      "logistic": "N(0, I)",
+      "gp": "N(1, I)"
+    },
+    "diag(L) clip": [
+      0.001,
+      1000
+    ]
+  }
+}

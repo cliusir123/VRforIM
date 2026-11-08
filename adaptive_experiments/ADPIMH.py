@@ -1,338 +1,212 @@
-import numpy.random as nr
-import numpy as np
-from typing import Tuple, Optional
-import jax.numpy as jnp
 import jax
+import jax.numpy as jnp
+import numpy as np
+import numpy.random as nr
 import optax
-import haiku as hk
-from Distributions import student_t, multivariate_normal, Stochastic_Volatility, Bayesian_Logistic_Regression,GP_Regression
+
+from Distributions import multivariate_normal
+
+CHUNK = 256
+
 
 class Basic_settings():
     def __init__(
         self,
-        target_str: str = 'multivariate_normal',      #target distribution
-        proposal_str: str = 'multivariate_normal',     #proposal distribution
-        itrnum: int = 10000,                #number of MH steps
-        dim : int = 16,                  #dimensions
-        learning_rate: float = 0.001,            #learning rate
-        model: Optional[Stochastic_Volatility] = None,
-        df : Optional[float] = 3,             #degree of freedom of student_t
-        value : int = 10
-        ) -> None:
+        target_str: str = 'multivariate_normal',
+        itrnum: int = 10000,
+        dim: int = 16,
+        learning_rate: float = 0.001,
+        model=None,
+        value: int = 10,
+        schedule: str = 'exponential',
+        cov_scale: float = 1.0,
+    ) -> None:
+        if schedule not in ('exponential', 'cosine'):
+            raise ValueError("schedule must be 'exponential' or 'cosine'")
+        self.schedule = schedule
+        self.cov_scale = cov_scale
         self.target_str = target_str
-        self.proposal_str = proposal_str
         self.itrnum = itrnum
         self.dim = dim
         self.lr_l = learning_rate
         self.lr_m = learning_rate * 10
-        self.model = model
-        self.df = df
-        if self.target_str == 'multivariate_normal':
-            self.target = multivariate_normal(self.dim, value)
-        elif self.target_str == 'stochastic_volatility' or 'bayesian_logistic_regression':
-            self.target = self.model
+        if target_str == 'multivariate_normal':
+            self.target = multivariate_normal(dim, value)
         else:
-            NotImplementedError
+            if model is None:
+                raise ValueError("a model must be given for a non-Gaussian target")
+            self.target = model
+        self.proposal = multivariate_normal(dim, value)
 
-        if self.proposal_str == 'multivariate_normal':
-            self.proposal = multivariate_normal(self.dim, value)
-        elif self.proposal_str == 'student_t':
-            self.proposal = student_t(self.dim, self.df)
-            self.proposal_adp = multivariate_normal(self.dim)
-            self.tcoeff = self.df / (self.df - 2)
-        else:
-            NotImplementedError
-            
-        self.logtarget = jax.jit(self.target.logpdf)
-        # self.logtarget = self.target.logpdf
+    def set_distribution_parameters(self, t_mean, t_L, p_mean, p_L) -> None:
+        self.t_mean = t_mean
+        self.t_L = t_L
+        self.p_mean = jnp.asarray(p_mean, dtype=jnp.float32)
+        self.p_L = jnp.asarray(p_L, dtype=jnp.float32)
+
+        def logt(y):
+            return self.target.logpdf(y, t_mean, t_L)
+        self.logtarget = jax.jit(logt)
         self.logproposal = jax.jit(self.proposal.logpdf)
-    
-    # t_mean: mean value of target ; t_L: scale of target
-    # p_mean: mean value of proposal ; p_L: scale of proposal
-    # adp_L: scale of distribution used for adaptation. adp_mean = p_mean due to moment matching
-    def set_distribution_parameters(self, *args) -> None:
-        self.t_mean = args[0]
-        self.t_L = args[1]
+        self._vlogt = jax.jit(jax.vmap(logt))
+        self._vlogq = jax.jit(jax.vmap(self.proposal.logpdf, in_axes=(0, None, None)))
+        self._vvalgrad = jax.jit(jax.vmap(jax.value_and_grad(logt)))
 
-        self.p_mean = args[2]
-        self.p_L = args[3]
+    @property
+    def im_L(self):
+        return self.p_L * jnp.sqrt(self.cov_scale)
 
-        if self.proposal_str == 'student_t':
-            self.adp_L = self.p_L * jnp.sqrt(self.tcoeff) #scale of normal after moment matching
-        elif self.proposal_str == 'multivariate_normal':
-            self.adp_L = self.p_L
+    @staticmethod
+    def _chunked(fn, Y, *args):
+        m = Y.shape[0]
+        size = min(CHUNK, m)
+        outs = []
+        for s in range(0, m, size):
+            block = Y[s:s + size]
+            k = block.shape[0]
+            if k < size:
+                block = jnp.concatenate([block, jnp.repeat(block[-1:], size - k, axis=0)])
+            out = fn(block, *args)
+            outs.append(jax.tree_util.tree_map(lambda a: np.asarray(a)[:k], out))
+        if isinstance(outs[0], tuple):
+            return tuple(np.concatenate(parts) for parts in zip(*outs))
+        return np.concatenate(outs)
 
     def init_state(self) -> None:
-        self.x0, _ = self.proposal.sampler(self.p_mean, self.p_L, 1)
-        self.current = self.x0.reshape((self.dim,))
-        self.log_t = self.logtarget(self.current, self.t_mean, self.t_L)
-        self.log_p = self.logproposal(self.current, self.p_mean, self.p_L)
-        self.grad_val = 0
-        self.grad_L = 0
+        x0, _ = self.proposal.sampler(self.p_mean, self.im_L, 1)
+        self.current = np.asarray(x0).reshape((self.dim,))
+        self.log_t = float(self.logtarget(self.current))
+        self.log_p = float(self.logproposal(self.current, self.p_mean, self.im_L))
         self.cum_obj = 0
 
+    def IMHsampling(self, num):
+        Y, eps = self.proposal.sampler(self.p_mean, self.im_L, num)
+        return Y, eps
 
-    def IMHsampling(self, num, is_adp = True):
-        sample_p, epsilon = self.proposal.sampler(self.p_mean, self.p_L, num)
-        if is_adp:
-            if self.proposal_str == 'multivariate_normal':   
-                sample_adp = sample_p
-            if self.proposal_str == 'student_t':
-                sample_adp, epsilon = self.proposal_adp.sampler(self.p_mean, self.adp_L, num)
-            return sample_p, sample_adp, epsilon
-        else:
-            return sample_p, epsilon
+    def IMHsteps(self, Y, X, alpha, accepted, offset):
+        Yj = jnp.asarray(Y)
+        log_t = self._chunked(self._vlogt, Yj)
+        log_q = self._chunked(self._vlogq, Yj, self.p_mean, self.im_L)
+        Y = np.asarray(Y)
+        for j in range(Y.shape[0]):
+            i = offset + j
+            X[i] = self.current
+            a = min(1.0, float(np.exp((log_t[j] - self.log_t) - (log_q[j] - self.log_p))))
+            alpha[i] = a
+            if nr.uniform(0.0, 1.0) <= a:
+                self.current = Y[j]
+                self.log_t = float(log_t[j])
+                self.log_p = float(log_q[j])
+                accepted[i] = 1
 
-
-    def IMHstep(self, p_test):
-        is_accept = 0
-        log_t_new = self.logtarget(p_test, self.t_mean, self.t_L)
-        log_p_new = self.logproposal(p_test, self.p_mean, self.p_L)
-        ratio_t = log_t_new - self.log_t
-        ratio_p = log_p_new - self.log_p
-        accept_ratio = min(1.0, jnp.exp(ratio_t - ratio_p))
-        test_uniform = nr.uniform(0.0, 1.0, 1)
-        if test_uniform <= accept_ratio:
-            self.current = p_test
-            is_accept = 1
-            self.log_t = log_t_new
-            self.log_p = log_p_new
-        return accept_ratio, is_accept
-    
-
-    def objective_function(self, data):
-        obj_fun = self.logtarget(data, self.t_mean, self.t_L)
-        return obj_fun
-    
+    def _lr_schedule(self, init_value):
+        if self.schedule == 'cosine':
+            return optax.cosine_decay_schedule(init_value=init_value, decay_steps=max(1, self.n_batch))
+        return optax.exponential_decay(init_value=init_value, transition_steps=4000,
+                                       decay_rate=0.2, staircase=True)
 
     def optimization_init(self):
-        # schedule_m = optax.constant_schedule(self.lr_m)
-        # schedule_l = optax.constant_schedule(self.lr_l)
-        # schedule_m = self.lr_m
-        # schedule_l = self.lr_l
-        decay_steps = 4000
-        decay_rate = 0.2
-        schedule_m = optax.exponential_decay(init_value=self.lr_m, transition_steps=decay_steps, decay_rate=decay_rate, staircase=True)
-        schedule_l = optax.exponential_decay(init_value=self.lr_l, transition_steps=decay_steps, decay_rate=decay_rate, staircase=True)
+        schedule_m = self._lr_schedule(self.lr_m)
+        schedule_l = self._lr_schedule(self.lr_l)
         self.optimizer_mean = optax.adam(schedule_m)
         self.optimizer_L = optax.adam(schedule_l)
         self.opt_state_mean = self.optimizer_mean.init(self.p_mean)
-        self.opt_state_L = self.optimizer_L.init(self.adp_L)
-        self.obj_grad = jax.grad(self.objective_function)
+        self.opt_state_L = self.optimizer_L.init(self.p_L)
 
-    
-    def optimization_collect(self, adp_sample, epsilon):
-        self.cur_grad = self.obj_grad(adp_sample)
-        self.grad_val += self.cur_grad / self.batch_size
-        self.grad_L += (self.cur_grad.reshape((self.dim,1)) @ epsilon.reshape((1,self.dim)) + jnp.diag(1 / jnp.diag(self.adp_L))) / self.batch_size
-        # v = jax.lax.linalg.triangular_solve(self.adp_L, adp_sample - self.p_mean, left_side=True, lower=True)
-        # u = jax.lax.linalg.triangular_solve(self.adp_L.T, v, left_side=True, lower=True)
-        # self.grad_L += (self.cur_grad.reshape((self.dim,1)) + u.reshape((self.dim,1))) @ epsilon.reshape((1,self.dim)) / self.batch_size
-        self.cum_obj += (self.objective_function(adp_sample) + jnp.sum(jnp.log(jnp.diag(self.adp_L)))) / self.batch_size
-        
-    
+    def optimization_collect(self, epsilon):
+        eps = np.asarray(epsilon)
+        B = eps.shape[0]
+        samples = jnp.asarray(self.p_mean)[None, :] + jnp.asarray(eps) @ self.p_L.T
+        vals, grads = self._chunked(self._vvalgrad, samples)
+        self.grad_val = jnp.asarray(grads.mean(axis=0))
+        self.grad_L = jnp.asarray(grads.T @ eps / B) + jnp.diag(1 / jnp.diag(self.p_L))
+        self.cum_obj = float(vals.mean() + jnp.sum(jnp.log(jnp.diag(self.p_L))))
+
     def optimization_update(self):
         updates, self.opt_state_mean = self.optimizer_mean.update(-self.grad_val, self.opt_state_mean)
         self.p_mean = optax.apply_updates(self.p_mean, updates)
         updates, self.opt_state_L = self.optimizer_L.update(-self.grad_L, self.opt_state_L)
-        self.adp_L = optax.apply_updates(self.adp_L, updates)
+        p_L = jnp.tril(optax.apply_updates(self.p_L, updates))
+        bounded_diag = jnp.clip(jnp.diag(p_L), 0.001, 1000.)
+        self.p_L = p_L - jnp.diag(jnp.diag(p_L)) + jnp.diag(bounded_diag)
+        self.log_p = float(self.logproposal(self.current, self.p_mean, self.im_L))
 
-        self.adp_L = jax.numpy.tril(self.adp_L, k = 0)
-        bounded_diag = jnp.clip(jnp.diag(self.adp_L), 0.001, 1000.)
-        self.adp_L = self.adp_L - jnp.diag(jnp.diag(self.adp_L)) + jnp.diag(bounded_diag)
+    def proposal_params(self):
+        p_L = np.asarray(self.im_L, dtype=np.float64)
+        return np.asarray(self.p_mean, dtype=np.float64).reshape(self.dim), p_L @ p_L.T
 
-        if self.proposal_str == 'student_t': 
-            self.p_L = self.adp_L / jnp.sqrt(self.tcoeff)
-        elif self.proposal_str == 'multivariate_normal':
-            self.p_L = self.adp_L
-        self.log_p = self.logproposal(self.current, self.p_mean, self.p_L)
+
+class IndMH(Basic_settings):
+
+    def IMH(self):
+        X = np.zeros((self.itrnum, self.dim))
+        alpha = np.zeros(self.itrnum)
+        accepted = np.zeros(self.itrnum)
+
+        self.init_state()
+        Y, _ = self.IMHsampling(self.itrnum)
+        Y = np.asarray(Y)
+        self.IMHsteps(Y, X, alpha, accepted, 0)
+
+        mean, cov = self.proposal_params()
+        return dict(X=X, Y=Y, alpha=alpha, accepted=accepted,
+                    means=mean[None], covs=cov[None],
+                    batch_idx=np.zeros(self.itrnum, dtype=int))
 
 
 class BAIM(Basic_settings):
-    def __init__(self,
-        target_str: str = 'multivariate_normal',
-        proposal_str: str = 'multivariate_normal',
-        itrnum: int = 10000,
-        batch_size: int = 50,
-        dim : int = 100,
-        learning_rate: float = 0.01,
-        model: Optional[Stochastic_Volatility] = None,
-        df : Optional[float] = 3,
-        value: int = 10
-        ):
-        super().__init__(target_str, proposal_str, itrnum, dim, learning_rate, model, df, value)
+
+    def __init__(self, target_str='multivariate_normal', itrnum=10000, batch_size=50, dim=16,
+                 learning_rate=0.01, model=None, value=10, schedule='exponential', cov_scale=1.0):
+        super().__init__(target_str, itrnum, dim, learning_rate, model, value, schedule, cov_scale)
+        if itrnum % batch_size != 0:
+            raise ValueError("itrnum must be a multiple of batch_size")
         self.batch_size = batch_size
-        self.n_batch = int(self.itrnum / self.batch_size)
-        self.learning_rate_init = learning_rate
-        self.learning_rate = learning_rate
+        self.n_batch = itrnum // batch_size
 
-
-    def adpIMH(self) -> Tuple[np.ndarray,...]:
-
-        #initialize arrays
-        t_sample = np.zeros((self.itrnum, self.dim))
-        p_sample = np.zeros((self.itrnum, self.dim))
-        acceptance_rate = np.zeros(self.itrnum)
-        is_acc = np.zeros(self.itrnum)
-        logtar = np.zeros(self.itrnum)
+    def adpIMH(self):
+        X = np.zeros((self.itrnum, self.dim))
+        Y = np.zeros((self.itrnum, self.dim))
+        alpha = np.zeros(self.itrnum)
+        accepted = np.zeros(self.itrnum)
+        means = np.zeros((self.n_batch, self.dim))
+        covs = np.zeros((self.n_batch, self.dim, self.dim))
         loss = np.zeros(self.n_batch)
-        pmeans = np.zeros((self.itrnum, self.dim))
-        pSigs = np.zeros((self.itrnum, self.dim))
-        pSigs_full = np.zeros((self.itrnum, self.dim, self.dim))
 
         self.init_state()
         self.optimization_init()
+        B = self.batch_size
+        for b in range(self.n_batch):
+            means[b], covs[b] = self.proposal_params()
+            proposals, epsilon = self.IMHsampling(B)
+            proposals = np.asarray(proposals)
+            Y[b * B:(b + 1) * B] = proposals
+            self.IMHsteps(proposals, X, alpha, accepted, b * B)
+            self.optimization_collect(epsilon)
+            loss[b] = self.cum_obj
+            self.optimization_update()
 
-        #IM iterations
-        for i in range(self.itrnum):
-            if i % self.batch_size == 0:
-                pro_sample, adp_sample, epsilon = self.IMHsampling(self.batch_size)
+        return dict(X=X, Y=Y, alpha=alpha, accepted=accepted, means=means, covs=covs,
+                    batch_idx=np.arange(self.itrnum) // B, loss=loss)
 
-            #IM iteration
-            t_sample[i] = self.current         
-            pos = i % self.batch_size    
-            a, is_a = self.IMHstep(pro_sample[pos])
-
-            self.optimization_collect(adp_sample[pos], epsilon[pos])  
-            p_sample[i] = pro_sample[pos]
-            acceptance_rate[i] = np.reshape(a, ())
-            is_acc[i] = is_a
-            logtar[i] = self.log_t
-            pmeans[i] = jnp.reshape(self.p_mean, (self.dim,))
-            pSigs[i] = jnp.diag(self.p_L @ self.p_L.T)
-            pSigs_full[i] = self.p_L @ self.p_L.T
-
-            if (i + 1) % self.batch_size == 0:
-                self.optimization_update()
-                pos = int((i + 1) / self.batch_size - 1)
-                loss[pos] = self.cum_obj
-                self.grad_val = 0
-                self.grad_L = 0
-                self.cum_obj = 0
-                # self.learning_rate = self.learning_rate_init / (1 + 0.02 * (i + 1) / self.batch_size)
-        return t_sample, p_sample, acceptance_rate, (pmeans,pSigs), loss,  logtar, is_acc, pSigs_full
-
-class IndMH(Basic_settings):
-    def __init__(self,
-        target_str: str = 'stochastic_volatility',
-        proposal_str: str = 'multivariate_normal',
-        itrnum: int = 10000,
-        dim : int = 16,
-        learning_rate: int=0,
-        model: Optional[Stochastic_Volatility] = None,
-        df : Optional[float] = 3,
-        value: int = 10
-        ):
-        super().__init__(target_str, proposal_str, itrnum, dim,learning_rate, model, df, value)
-    
-    def IMH(self) -> Tuple[np.ndarray,...]:
-       #initialize arrays
-        t_sample = np.zeros((self.itrnum, self.dim))
-        acceptance_rate = np.zeros(self.itrnum)
-        is_acc = np.zeros(self.itrnum)
-        pmeans = np.zeros((self.itrnum, self.dim))
-        pSigs = np.zeros((self.itrnum, self.dim))
-        pSigs_full = np.zeros((self.itrnum, self.dim, self.dim))
-
-        self.init_state()
-        #IMH iterations
-        p_sample , _= self.IMHsampling(self.itrnum, False)
-        for i in range(self.itrnum):
-
-            t_sample[i] = self.current.reshape((self.dim,))
-
-            a, is_a = self.IMHstep(p_sample[i])          
-            #update
-            
-            acceptance_rate[i] = np.reshape(a,())
-            is_acc[i] = is_a
-            pmeans[i] = jnp.reshape(self.p_mean, (self.dim,))
-            pSigs[i] = jnp.diag(self.p_L @ self.p_L.T)
-            pSigs_full[i] = self.p_L @ self.p_L.T
-
-        return t_sample, p_sample, acceptance_rate,(pmeans,pSigs_full), is_acc
-    
 
 class adp_only(Basic_settings):
-    def __init__(self, 
-                 target_str: str = 'multivariate_normal', 
-                 proposal_str: str = 'multivariate_normal', 
-                 itrnum: int = 10000,
-                 batch_size: int = 50,
-                 dim: int = 16, 
-                 learning_rate: float = 0.01, 
-                 model: Optional[Stochastic_Volatility] = None, 
-                 df: Optional[float] = 3) -> None:
-        super().__init__(target_str, proposal_str, itrnum, dim, learning_rate, model, df)
-        self.batch_size = batch_size
-        self.n_batch = int(self.itrnum / self.batch_size)
-        self.learning_rate_init = learning_rate
-        self.learning_rate = learning_rate
 
-    def adp(self, nfm):
+    def __init__(self, target_str='multivariate_normal', itrnum=10000, batch_size=50, dim=16,
+                 learning_rate=0.01, model=None, value=10, schedule='exponential', cov_scale=1.0):
+        super().__init__(target_str, itrnum, dim, learning_rate, model, value, schedule, cov_scale)
+        self.batch_size = batch_size
+        self.n_batch = itrnum // batch_size
+
+    def adp(self, verbose=True):
         loss = np.zeros(self.n_batch)
         self.init_state()
         self.optimization_init()
-        for i in range(self.itrnum):
-            if i % self.batch_size == 0:
-                print('\r', end = str(int(i / self.batch_size + 1)) + '/'+ str(self.n_batch) + ' batches adapted !')
-                p_sample, epsilon = self.IMHsampling(self.batch_size, False)
-
-            pos = i % self.batch_size    
-            self.optimization_collect(p_sample[pos], epsilon[pos])
-
-            if (i + 1) % self.batch_size == 0:
-                self.optimization_update()
-                pos = int((i + 1) / self.batch_size - 1)
-                loss[pos] = self.cum_obj
-                self.grad_val = 0
-                self.grad_L = 0
-                self.cum_obj = 0
-                self.learning_rate = self.learning_rate_init / (1 + 0.02 * (i + 1) / self.batch_size)
+        for b in range(self.n_batch):
+            if verbose and (b + 1) % max(1, self.n_batch // 10) == 0:
+                print(f'{b + 1}/{self.n_batch} batches adapted', flush=True)
+            _, epsilon = self.IMHsampling(self.batch_size)
+            self.optimization_collect(epsilon)
+            loss[b] = self.cum_obj
+            self.optimization_update()
         return loss
-    
-
-class pCN(Basic_settings):
-    def __init__(self,
-        target_str: str = 'multivariate_normal',
-        proposal_str: str = 'multivariate_normal',
-        itrnum: int = 10000,
-        dim : int = 100,
-        learning_rate: float = 0.01,
-        model: Optional[Stochastic_Volatility] = None,
-        df : Optional[float] = 3,
-        beta : float = 0.5,
-        value : int = 10
-        ):
-        super().__init__(target_str, proposal_str, itrnum, dim, learning_rate, model, df, value)
-        self.beta = beta
-    
-    def pCNsampling(self):
-        sample_p , epsilon = self.proposal.sampler(self.p_mean, self.p_L, 1)
-        # sample_p = (1 - self.beta) * self.p_mean + self.beta * self.current + jnp.sqrt(1-self.beta ** 2) * self.p_L @ epsilon.reshape((self.dim,))
-        return sample_p
-
-    def pCN_MCMC(self):
-        t_sample = np.zeros((self.itrnum, self.dim))
-        p_sample = np.zeros((self.itrnum, self.dim))
-        acceptance_rate = np.zeros(self.itrnum)
-        paras = np.zeros((self.itrnum, self.dim))
-        logtar = np.zeros(self.itrnum)
-        is_acc = np.zeros(self.itrnum)
-        self.init_state()
-        #IMH iterations
-        for i in range(self.itrnum):
-            print(str(i+1) + '/'+ str(self.itrnum) + ' iterations','\r', end = '')
-            samplep = self.pCNsampling()
-            t_sample[i] = self.current.reshape((self.dim,))
-            a, is_a = self.IMHstep(samplep.reshape(self.dim,))     
-            #update
-
-            p_sample[i] = samplep.reshape((self.dim,))
-            acceptance_rate[i] = np.reshape(a,())
-            is_acc[i] = is_a
-            paras[i] = (1 - self.beta) * self.p_mean + self.beta * self.current
-            logtar[i] = self.log_t
-        print('accprob:',is_acc.mean())
-
-        return t_sample, p_sample, acceptance_rate, paras, is_acc, logtar

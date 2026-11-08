@@ -1,67 +1,28 @@
 import numpy as np
-import jax
-import jax.numpy as jnp
 import numpy.random as nr
-from gdistribution import gprior, mix_normal
+
 
 class IndMH():
-
-    def __init__(
-        self,
-        itrnum: int = 10000,                         #number of MH steps
-        dim : int = 16,
-        target : str = 'gprior',
-        proposal : str = 'mix_normal',
-        ) -> None:
-        self.dim = dim
-        self.target = eval(target)(self.dim)
-        self.proposal = eval(proposal)(self.dim)
+    def __init__(self, itrnum, prior, proposal) -> None:
         self.itrnum = itrnum
-        
-        self.logtarget = self.target.logpdf
-        self.logproposal = self.proposal.logpdf
-        self.logtarget = jax.jit(self.logtarget)
-        self.logproposal = jax.jit(self.logproposal)
+        self.prior = prior
+        self.proposal = proposal
 
-    def set_distribution_parameters(self, cov0, n_comps, weights, covs, input, g, gs) -> None:
-        self.cov = cov0
-        self.target.set_parameters(cov0, input, g)
-        self.proposal.set_parameters(n_comps, weights, gs, covs, input)
-    
-    def init_state(self) -> None:
-        self.x0 = self.proposal.sampler(1)
-        self.current = self.x0.reshape((self.dim,))
-        self.log_t = self.logtarget(self.current)
-        self.log_p = self.logproposal(self.current)
-    
-    def IMHsampling(self, num):
-        sample_p = self.proposal.sampler(num)
-        return sample_p
-    
-    def IMHstep(self, p_test):
-        log_t_new = self.logtarget(p_test)
-        log_p_new = self.logproposal(p_test)
-        ratio_t = log_t_new - self.log_t
-        ratio_p = log_p_new - self.log_p
-        accept_ratio = min(1.0, jnp.exp(ratio_t - ratio_p))
-        test_uniform = nr.uniform(0.0, 1.0, 1)
-        if test_uniform <= accept_ratio:
-            self.current = p_test
-            self.log_t = log_t_new
-            self.log_p = log_p_new
-        return accept_ratio
-    
     def IMH(self):
-       #initialize arrays
-        t_sample = np.zeros((self.itrnum, self.dim))
-        acceptance_rate = np.zeros(self.itrnum)
-        self.init_state()
-        #IMH iterations
-        p_sample = self.IMHsampling(self.itrnum)
-        for i in range(self.itrnum):
-            t_sample[i] = self.current.reshape((self.dim,))
-            a = self.IMHstep(p_sample[i])          
-            #update
-            acceptance_rate[i] = np.reshape(a,())
+        self.prior.new_chain()
+        Y = self.proposal.sampler(self.itrnum)
+        log_t = self.prior.log_density(Y)
+        log_q = self.proposal.logpdf(Y)
 
-        return t_sample, p_sample, acceptance_rate
+        x = self.proposal.sampler(1)[0]
+        log_tx = self.prior.log_density(x[None])[0]
+        log_qx = self.proposal.logpdf(x[None])[0]
+
+        X = np.zeros_like(Y)
+        alpha = np.zeros(self.itrnum)
+        for i in range(self.itrnum):
+            X[i] = x
+            alpha[i] = min(1.0, np.exp((log_t[i] - log_tx) - (log_q[i] - log_qx)))
+            if nr.uniform() <= alpha[i]:
+                x, log_tx, log_qx = Y[i], log_t[i], log_q[i]
+        return X, Y, alpha

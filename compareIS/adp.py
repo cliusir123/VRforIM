@@ -1,34 +1,12 @@
-import matplotlib.pyplot as plt
 import matplotlib
 matplotlib.use('Agg')
+import matplotlib.pyplot as plt
 import numpy as np
-from scipy.stats import norm, t,multivariate_normal
-from statsmodels.graphics.tsaplots import plot_acf
+from scipy.stats import norm, multivariate_normal
 import jax
 import jax.numpy as jnp
 import optax
-from jax.random import PRNGKey, normal
-from scipy.stats import multivariate_normal
-import scipy
 from tqdm import tqdm
-
-def independent_metropolis_step(target_density, proposal_density, proposal_sampler, last_step, last_den):
-    """Single step of independent Metropolis algorithm"""
-    y = proposal_sampler()
-    pi_y = target_density(y)
-    q_y = proposal_density(y)
-
-    x = last_step.squeeze()
-    pi_x = target_density(x)
-    q_x = last_den
-
-    alpha = min(1, (pi_y * q_x) / (pi_x * q_y))
-    if np.random.rand() < alpha:
-        x = y
-        pi_x = pi_y
-        q_x = q_y
-
-    return x, y, alpha, q_x
 
 def im_estimator(F, X):
     fX = F(X)
@@ -47,10 +25,9 @@ def imcv_estimator(F, Fapprox, X, Y, alpha, eq_f):
     b_2 = np.cov(alpha * (fY - fX), (fapp - eq_f))[0,1] / np.var((fapp - eq_f))
     pg = fX + alpha * (fY - fX) - b_2 * (fapp - eq_f)
     numerator = np.mean(fX * (fX + pg)) - np.mean(fX) * np.mean(fX + pg)
-    denominator = np.sum((fX[0 : l - 1] - pg[1 : l]) ** 2) / l
+    denominator = np.sum((fX[1:] - pg[:-1]) ** 2) / l
     b_1 = numerator / denominator
     delta = b_1* (alpha * (fY - fX) - b_2*(fapp - eq_f))
-    # delta = alpha * (fY - fX) - (fapp - eq_f)
 
     return np.mean(fX + delta)
 
@@ -62,7 +39,6 @@ def iscv_estimator(F, Fapp, samples, target_densities, proposal_densities, eq_f)
     fapp = Fapp(samples)
     b_2 = np.cov(f_vals * corrections, (fapp - eq_f))[0,1] / np.var((fapp - eq_f))
     return np.mean(f_vals * corrections - b_2*(fapp-eq_f))
-    # return np.mean(f_vals * corrections - (fapp-eq_f))
 
 
 def run_estimators(
@@ -74,24 +50,7 @@ def run_estimators(
     proposal_density,
     proposal_sampler
 ):
-    """
-    Run IM, IS, IMCV, ISCV estimators using provided functions and settings.
 
-    Parameters:
-        sample_size (int): Number of samples
-        F (function): Objective function F(x), accepts (n, d) array
-        Fapp (function): Approximation of F(x), same input/output
-        eq_f (float): Theoretical expectation of Fapp under proposal
-        mean_true (float): True expectation of F under target (for reference)
-        target_density (function): Target density, accepts (n, d) or (d,)
-        proposal_density (function): Proposal density, accepts (n, d) or (d,)
-        proposal_sampler (function): Proposal sampler with size keyword
-
-    Returns:
-        dict: Estimator results {'IM', 'IS', 'IMCV', 'ISCV', 'TRUE'}
-    """
-
-    # === Helper: one IM step ===
     def im_step(last_x, last_q, last_pi):
         y = proposal_sampler()
         pi_y = target_density(y)
@@ -102,23 +61,20 @@ def run_estimators(
 
         alpha = min(1, (pi_y * q_x) / (pi_x * q_y))
         if np.random.rand() < alpha:
-            return y, y, alpha, q_y, pi_y  # accepted
+            return y, y, alpha, q_y, pi_y
         else:
-            return last_x, y, alpha, q_x, pi_x  # rejected
+            return last_x, y, alpha, q_x, pi_x
 
-    # === Step 1: Sampling from proposal ===
     samples = proposal_sampler(size=sample_size)
     target_densities = target_density(samples)
     proposal_densities = proposal_density(samples)
 
-    # === Step 2: Independent Metropolis sampling ===
     X, Y, alpha_list = [], [], []
 
-    x = proposal_sampler()  # initial
+    x = proposal_sampler()
     qx = proposal_density(x)
     px = target_density(x)
 
-    # Main sampling after burn-in
     for _ in tqdm(range(sample_size), desc="Metropolis sampling", leave=False):
         x_new, y, alpha, qx_new, px_new = im_step(x, qx, px)
         X.append(x)
@@ -131,7 +87,6 @@ def run_estimators(
     X = np.array(X)
     Y = np.array(Y)
     alpha_array = np.array(alpha_list)
-    # === Step 3: Estimators ===
     results = {
         "IM": im_estimator(F, X),
         "IS": is_estimator(F, samples, target_densities, proposal_densities),
@@ -149,9 +104,6 @@ def mock_adaptation_estimator(
     target_density,
     proposal_generator
 ):
-    """
-    Perform mock adaptation and average estimators across improving proposals.
-    """
     total_results = {"IM": 0.0, "IS": 0.0, "IMCV": 0.0, "ISCV": 0.0}
 
     for batch in tqdm(range(num_batches), desc="Processing batches", leave=False):
@@ -173,27 +125,6 @@ def mock_adaptation_estimator(
     averaged_results = {key: val / num_batches for key, val in total_results.items()}
     return averaged_results
 
-def proposal_generator(mu_start, mu_end, Sigma_start, Sigma_end, num_batches, kappa):
-    def generator(batch_index):
-        # Compute interpolation weight
-        alpha = batch_index / num_batches
-
-        # Interpolate mean and covariance
-        mu = (1 - alpha) * mu_start + alpha * mu_end
-        Sigma = (1 - alpha) * Sigma_start + alpha * Sigma_end
-        # Create proposal density and sampler
-        proposal_density = lambda x: multivariate_normal.pdf(x, mean=mu, cov=Sigma)
-        proposal_sampler = lambda size=None: np.random.multivariate_normal(mean=mu, cov=Sigma, size=size)
-        mu_S = np.sum(mu)
-        sigma_S2 = np.sum(Sigma)
-        eq_f = norm.cdf((kappa * mu_S) / np.sqrt(1 + kappa**2 * sigma_S2))
-        # proposal_density = lambda x: norm.pdf(x, loc=mu, scale=Sigma)
-        # proposal_sampler = lambda size=None: np.random.normal(loc=mu, scale=Sigma, size=size)
-        # eq_f = norm.cdf((kappa * mu) / np.sqrt(1 + kappa**2 * Sigma))
-
-        return proposal_density, proposal_sampler, eq_f
-    return generator
-
 class OptimizerSettings:
     def __init__(
         self,
@@ -201,7 +132,7 @@ class OptimizerSettings:
         learning_rate: float = 0.01,
         model=None,
         value: int = 10,
-        decay_type: str = "none",  # 'none', 'exponential', 'linear'
+        decay_type: str = "none",
         decay_steps: int = 10000,
         decay_rate: float = 0.9
     ):
@@ -245,7 +176,7 @@ class OptimizerSettings:
                 end_value=0.0,
                 transition_steps=self.decay_steps
             )
-        else:  # no decay
+        else:
             return optax.constant_schedule(init_value)
 
     def optimization_init(self):
@@ -285,14 +216,10 @@ def generate_proposal_list_from_optimizer(
     batch_size: int,
     kappa: float
 ):
-    """
-    Run optimizer over num_batches, collect proposals (density, sampler, eq_f).
-    """
     proposal_list = []
     dim = optimizer.dim
 
     for batch_index in tqdm(range(num_batches), desc="Optimizing proposals"):
-        # ---- Step 1: Sample from current proposal ----
         epsilons = np.random.normal(size=(batch_size, dim))
         samples = np.array([
             optimizer.p_mean + optimizer.p_L @ eps
@@ -300,7 +227,6 @@ def generate_proposal_list_from_optimizer(
         ])
         samples = jnp.array(samples)
 
-        # ---- Step 2: Collect gradients ----
         optimizer.init_state()
         for i in tqdm(range(batch_size), desc=f"Batch {batch_index} gradients", leave=False):
             optimizer.optimization_collect(
@@ -309,10 +235,8 @@ def generate_proposal_list_from_optimizer(
                 batch_size=batch_size
             )
 
-        # ---- Step 3: Update parameters ----
         optimizer.optimization_update()
 
-        # ---- Step 4: Build proposal functions ----
         mu = np.array(optimizer.p_mean)
         L = np.array(optimizer.p_L)
         Sigma = L @ L.T
@@ -320,7 +244,6 @@ def generate_proposal_list_from_optimizer(
         proposal_density = lambda x, mu=mu, Sigma=Sigma: multivariate_normal.pdf(x, mean=mu, cov=Sigma)
         proposal_sampler = lambda size=None, mu=mu, Sigma=Sigma: np.random.multivariate_normal(mean=mu, cov=Sigma, size=size)
 
-        # ---- Step 5: Compute eq_f ----
         mu_S = np.sum(mu)
         sigma_S2 = np.sum(Sigma)
         eq_f = norm.cdf((kappa * mu_S) / np.sqrt(1 + kappa**2 * sigma_S2))
@@ -352,7 +275,6 @@ def run_experiment_simple(
     target_density,
     proposal_generator
 ):
-    # Store results for each estimator
     IM_vals = []
     IS_vals = []
     IMCV_vals = []
@@ -372,13 +294,11 @@ def run_experiment_simple(
         IMCV_vals.append(res["IMCV"])
         ISCV_vals.append(res["ISCV"])
 
-    # Convert to numpy arrays
     IM_vals = np.array(IM_vals)
     IS_vals = np.array(IS_vals)
     IMCV_vals = np.array(IMCV_vals)
     ISCV_vals = np.array(ISCV_vals)
 
-    # Helper to print stats and return MSE
     def print_stats(name, vals):
         mean = np.mean(vals)
         bias = mean - mean_true
@@ -391,7 +311,6 @@ def run_experiment_simple(
         print(f"  MSE     = {mse:.6e}\n")
         return mse
 
-    # Get MSE values
     mse_im = print_stats("IM", IM_vals)
     mse_is = print_stats("IS", IS_vals)
     mse_imcv = print_stats("IMCV", IMCV_vals)
@@ -426,28 +345,9 @@ sigma_S2 = np.sum(sigma_proposal)
 eq_f = norm.cdf((kappa * mu_S) / np.sqrt(1 + kappa**2 * sigma_S2))
 
 
-# mu_target = 0.0
-# sigma_target = 1.0
-
-# mu_proposal = 0.1
-# sigma_proposal = 1.01
-
-# target_density = lambda x: norm.pdf(x, loc=mu_target, scale=sigma_target)
-# proposal_density = lambda x: norm.pdf(x, loc=mu_proposal, scale=sigma_proposal)
-# proposal_sampler = lambda size=None: np.random.normal(loc=mu_proposal, scale=sigma_proposal, size=size)
-
-# F = lambda x: np.exp(x) / (1 + np.exp(x))
-# kappa = np.sqrt(np.pi / 8)
-# Fapp = lambda x: norm.cdf(kappa * x)
-
-# mean_true = 0.5
-# eq_f = norm.cdf((kappa * mu_proposal) / np.sqrt(1 + kappa ** 2 * sigma_proposal ** 2))
-
-# Define sample sizes to test
-sample_sizes = [50, 100,150, 200,300,400, 500, 600,800, 1000]  # Example sample sizes
-num_batches = 100  # Fixed number of batches
+sample_sizes = [50, 100,150, 200,300,400, 500, 600,800, 1000]
+num_batches = 100
 dim = 2
-# Store results for each sample size
 results = {sample_size: {} for sample_size in sample_sizes}
 
 for sample_size in tqdm(sample_sizes, desc="Running experiments for different sample sizes"):
@@ -488,11 +388,10 @@ for sample_size in tqdm(sample_sizes, desc="Running experiments for different sa
         proposal_generator=proposal_generator
     )
 
-# Plot results
 plt.figure(figsize=(12, 6))
 estimators = ['IM', 'IS', 'IMCV', 'ISCV']
-markers = ['+', '*', '^', 'x']  # Different marker styles for each estimator
-colors = ['blue', 'red', 'green', 'purple']  # Different colors for each estimator
+markers = ['+', '*', '^', 'x']
+colors = ['blue', 'red', 'green', 'purple']
 
 for estimator, marker, color in zip(estimators, markers, colors):
     mse_values = [results[sample_size][estimator] for sample_size in sample_sizes]
@@ -500,15 +399,15 @@ for estimator, marker, color in zip(estimators, markers, colors):
         sample_sizes,
         mse_values,
         marker=marker,
-        color=color,      # Different color for each estimator
+        color=color,
         label=estimator,
         linestyle='-',
-        markersize=12,    # Larger symbols
-        alpha=0.7         # Make lines lighter (optional, can adjust)
+        markersize=12,
+        alpha=0.7
     )
 
 plt.xlabel('Batch Size', fontsize=14)
-plt.ylabel('MSE', fontsize=14)  # y-label is just "MSE"
+plt.ylabel('MSE', fontsize=14)
 plt.xticks(fontsize=12)
 plt.yticks(fontsize=12)
 plt.yscale('log')
@@ -516,15 +415,12 @@ plt.legend(fontsize=12)
 plt.grid(True)
 plt.tight_layout()
 
-# Save the figure as a PDF
 plt.savefig('mse_vs_batch_size.pdf', dpi=300, bbox_inches='tight')
 plt.close()
 
-# Define number of batches to test
-num_batches_list = [10, 20, 50, 75, 100, 125, 150, 175, 200,250,300]  # Example number of batches
-sample_size = 100  # Fixed sample size
+num_batches_list = [10, 20, 50, 75, 100, 125, 150, 175, 200,250,300]
+sample_size = 100
 dim=2
-# Store results for each number of batches
 results = {num_batches: {} for num_batches in num_batches_list}
 
 for num_batches in tqdm(num_batches_list, desc="Running experiments for different numbers of batches"):
@@ -565,11 +461,10 @@ for num_batches in tqdm(num_batches_list, desc="Running experiments for differen
         proposal_generator=proposal_generator
     )
 
-# Plot results
 plt.figure(figsize=(12, 6))
 estimators = ['IM', 'IS', 'IMCV', 'ISCV']
-markers = ['+', '*', '^', 'x']  # Different marker styles for each estimator
-colors = ['blue', 'red', 'green', 'purple']  # Different colors for each estimator
+markers = ['+', '*', '^', 'x']
+colors = ['blue', 'red', 'green', 'purple']
 
 for estimator, marker, color in zip(estimators, markers, colors):
     mse_values = [results[num_batches][estimator] for num_batches in num_batches_list]
@@ -577,26 +472,23 @@ for estimator, marker, color in zip(estimators, markers, colors):
         num_batches_list,
         mse_values,
         marker=marker,
-        color=color,      # Different color for each estimator
+        color=color,
         label=estimator,
         linestyle='-',
-        markersize=12,    # Larger symbols
-        alpha=0.7         # Make lines lighter (optional, can adjust)
+        markersize=12,
+        alpha=0.7
     )
 
-# Increase font size for axis labels
 plt.xlabel('Number of Batches', fontsize=14)
-plt.ylabel('MSE', fontsize=14)  # Changed y-axis label to just "MSE"
+plt.ylabel('MSE', fontsize=14)
 
-# Increase font size for axis ticks
 plt.xticks(fontsize=12)
 plt.yticks(fontsize=12)
 
 plt.yscale('log')
-plt.legend(fontsize=12)  # Increase font size for legend
+plt.legend(fontsize=12)
 plt.grid(True)
 plt.tight_layout()
 
-# Save the figure as a PDF
 plt.savefig('mse_vs_num_batches.pdf', dpi=300, bbox_inches='tight')
 plt.close()
